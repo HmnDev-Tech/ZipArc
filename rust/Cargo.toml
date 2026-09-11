@@ -1,0 +1,29 @@
+[package]
+name = "karchiver_rs"
+version = "0.1.0"
+edition = "2021"
+description = "KArchiver Rust core: fast archive compress/extract, directory scan"
+license = "GPL-3.0"
+repository = "https://github.com/kerneldroid/KArchiver"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+jni = { version = "0.21", features = ["invocation"] }
+zip = { version = "2.4", features = ["deflate", "bzip2", "deflate64", "lzma", "zstd"] }
+tar = "0.4"
+flate2 = "1.0"
+bzip2 = "0.4"
+xz2 = "0.1"
+zstd = "0.13"
+walkdir = "2.4"
+rayon = "1.10"
+anyhow = "1.0"
+
+[profile.release]
+lto = true
+opt-level = 3
+codegen-units = 1
+strip = true
+panic = "abort"
