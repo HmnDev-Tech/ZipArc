@@ -9,5 +9,4 @@ rust/target/
 local.properties
 *.jks
 *.keystore
-.gradle/
 app/src/main/jniLibs/
