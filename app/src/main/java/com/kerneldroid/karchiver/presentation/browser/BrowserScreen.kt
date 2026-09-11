@@ -8,6 +8,7 @@ package com.kerneldroid.karchiver.presentation.browser
 
 import android.os.Environment
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -23,6 +24,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.NoteAdd
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -30,6 +32,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
@@ -48,6 +51,8 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+private enum class CreateKind { FOLDER, FILE }
+
 @Composable
 fun BrowserScreen(
     vm: BrowserViewModel,
@@ -65,6 +70,7 @@ fun BrowserScreen(
     var showSortSheet by rememberSaveable { mutableStateOf(false) }
     var showCompressDialog by remember { mutableStateOf(false) }
     var pendingExtract by remember { mutableStateOf<File?>(null) }
+    var createKind by remember { mutableStateOf<CreateKind?>(null) }
 
     val selectedItems = state.items.filter { state.selected.contains(it.file.absolutePath) }
     val singleArchive = selectedItems.singleOrNull()?.takeIf { FormatRegistry.isArchive(it.extension) }
@@ -100,6 +106,14 @@ fun BrowserScreen(
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
+        floatingActionButton = {
+            if (!searchActive && !state.isSelectionMode) {
+                CreateFabMenu(
+                    onCreateFolder = { createKind = CreateKind.FOLDER },
+                    onCreateFile = { createKind = CreateKind.FILE }
+                )
+            }
+        },
         topBar = {
             if (searchActive) {
                 SearchTopBar(
@@ -246,6 +260,74 @@ fun BrowserScreen(
                 }) { Text("Extract") }
             },
             dismissButton = { TextButton(onClick = { pendingExtract = null }) { Text("Cancel") } }
+        )
+    }
+
+    createKind?.let { kind ->
+        var name by rememberSaveable(kind) {
+            mutableStateOf(if (kind == CreateKind.FOLDER) "New folder" else "New file.txt")
+        }
+        AlertDialog(
+            onDismissRequest = { createKind = null },
+            icon = {
+                Icon(
+                    if (kind == CreateKind.FOLDER) Icons.Filled.CreateNewFolder else Icons.AutoMirrored.Filled.NoteAdd,
+                    null
+                )
+            },
+            title = { Text(if (kind == CreateKind.FOLDER) "New folder" else "New file") },
+            text = {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Name") },
+                    singleLine = true
+                )
+            },
+            confirmButton = {
+                Button(onClick = {
+                    val target = kind
+                    createKind = null
+                    if (target == CreateKind.FOLDER) {
+                        vm.createFolder(name) { r ->
+                            scope.launch { snackbar.showSnackbar(if (r.isSuccess) "Folder created" else "Could not create folder") }
+                        }
+                    } else {
+                        vm.createFile(name) { r ->
+                            scope.launch { snackbar.showSnackbar(if (r.isSuccess) "File created" else "Could not create file") }
+                        }
+                    }
+                }) { Text("Create") }
+            },
+            dismissButton = { TextButton(onClick = { createKind = null }) { Text("Cancel") } }
+        )
+    }
+}
+
+@Composable
+private fun CreateFabMenu(onCreateFolder: () -> Unit, onCreateFile: () -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    FloatingActionButtonMenu(
+        expanded = expanded,
+        button = {
+            ToggleFloatingActionButton(
+                checked = expanded,
+                onCheckedChange = { expanded = it }
+            ) {
+                val rotation by animateFloatAsState(if (expanded) 45f else 0f, label = "fabRotation")
+                Icon(Icons.Filled.Add, "Create", Modifier.rotate(rotation))
+            }
+        }
+    ) {
+        FloatingActionButtonMenuItem(
+            onClick = { expanded = false; onCreateFolder() },
+            icon = { Icon(Icons.Filled.CreateNewFolder, null) },
+            text = { Text("New folder") }
+        )
+        FloatingActionButtonMenuItem(
+            onClick = { expanded = false; onCreateFile() },
+            icon = { Icon(Icons.AutoMirrored.Filled.NoteAdd, null) },
+            text = { Text("New file") }
         )
     }
 }
@@ -418,7 +500,7 @@ private fun FileList(
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+        contentPadding = PaddingValues(start = 12.dp, top = 8.dp, end = 12.dp, bottom = 96.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp)
     ) {
         items(state.items, key = { it.file.absolutePath }) { item ->
@@ -443,7 +525,7 @@ private fun FileGrid(
     LazyVerticalGrid(
         columns = GridCells.Adaptive(minSize = 104.dp),
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(12.dp),
+        contentPadding = PaddingValues(start = 12.dp, top = 12.dp, end = 12.dp, bottom = 96.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {

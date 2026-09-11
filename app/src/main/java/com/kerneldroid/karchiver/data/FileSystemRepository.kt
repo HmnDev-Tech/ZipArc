@@ -36,6 +36,22 @@ class FileSystemRepository {
         runCatching { files.forEach { if (it.isDirectory) it.deleteRecursively() else it.delete() } }
     }
 
+    suspend fun createDirectory(parent: File, name: String): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            val dir = File(parent, name)
+            if (dir.exists()) error("Already exists")
+            if (!dir.mkdirs()) error("Could not create directory")
+        }
+    }
+
+    suspend fun createFile(parent: File, name: String): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            val file = File(parent, name)
+            if (file.exists()) error("Already exists")
+            if (!file.createNewFile()) error("Could not create file")
+        }
+    }
+
     suspend fun copy(sources: List<File>, destDir: File): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
             destDir.mkdirs()

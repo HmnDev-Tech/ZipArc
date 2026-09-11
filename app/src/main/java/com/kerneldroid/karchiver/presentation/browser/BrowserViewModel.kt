@@ -178,6 +178,22 @@ class BrowserViewModel(
         }
     }
 
+    fun createFolder(name: String, onDone: (Result<Unit>) -> Unit = {}) {
+        val trimmed = name.trim(); if (trimmed.isEmpty()) return
+        viewModelScope.launch {
+            val r = repo.createDirectory(_state.value.currentDir, trimmed)
+            refresh(); onDone(r)
+        }
+    }
+
+    fun createFile(name: String, onDone: (Result<Unit>) -> Unit = {}) {
+        val trimmed = name.trim(); if (trimmed.isEmpty()) return
+        viewModelScope.launch {
+            val r = repo.createFile(_state.value.currentDir, trimmed)
+            refresh(); onDone(r)
+        }
+    }
+
     fun compressSelection(name: String = "archive.zip", onDone: (Result<Unit>) -> Unit = {}) {
         val files = selectedFiles(); if (files.isEmpty()) return
         viewModelScope.launch {
