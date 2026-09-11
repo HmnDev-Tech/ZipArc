@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "KArchiver Rust core: fast archive compress/extract, directory scan"
 license = "GPL-3.0"
-repository = "https://github.com/kerneldroid/KArchiver"
+repository = "https://github.com/sysrv64/KArchiver"
 
 [lib]
 crate-type = ["cdylib", "rlib"]

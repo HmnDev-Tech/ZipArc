@@ -1,0 +1,71 @@
+name: Build KArchiver
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+concurrency:
+  group: karchiver-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK 37 and NDK
+        run: |
+          set +e
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+          sdkmanager --install "platforms;android-37" "build-tools;37.0.0" "ndk;28.2.13676358" 2>&1 || true
+          sdkmanager --install "platforms;android-37" --channel=3 2>&1 || true
+          sdkmanager --install "platforms;android-CinnamonBun" 2>&1 || true
+          sdkmanager --install "platforms;android-36" "build-tools;36.0.0" 2>&1 || true
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/28.2.13676358" >> "$GITHUB_ENV"
+          sdkmanager --list_installed | tail -n 30 || true
+          set -e
+
+      - name: Install Rust 1.90
+        uses: dtolnay/rust-toolchain@1.90.0
+        with:
+          targets: aarch64-linux-android
+
+      - name: Install cargo-ndk
+        run: command -v cargo-ndk >/dev/null 2>&1 || cargo install cargo-ndk --locked
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      - name: Build Rust .so for arm64-v8a
+        run: |
+          cd rust
+          cargo ndk -t arm64-v8a --platform 26 -o ../app/src/main/jniLibs build --lib
+          ls -la ../app/src/main/jniLibs/arm64-v8a/
+
+      - name: Build Debug APK
+        run: |
+          chmod +x ./gradlew
+          ./gradlew :app:assembleDebug --no-daemon -x lint --stacktrace
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v6
+        with:
+          name: KArchiver-debug
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          compression-level: 0
