@@ -29,6 +29,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.automirrored.filled.NoteAdd
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -47,12 +48,16 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.kerneldroid.karchiver.data.CompressFormat
 import com.kerneldroid.karchiver.data.FileItem
 import com.kerneldroid.karchiver.data.FormatRegistry
 import com.kerneldroid.karchiver.data.SortBy
+import com.kerneldroid.karchiver.data.normalizeArchiveName
 import kotlinx.coroutines.launch
 import java.io.File
 import java.text.SimpleDateFormat
@@ -70,6 +75,9 @@ fun BrowserScreen(
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val refreshing by vm.refreshing.collectAsStateWithLifecycle()
+    val archiveOpActive by vm.archiveOpActive.collectAsStateWithLifecycle()
+    val preview by vm.preview.collectAsStateWithLifecycle()
+    val verify by vm.verify.collectAsStateWithLifecycle()
     val haptics = LocalHapticFeedback.current
     val context = LocalContext.current
     val snackbar = remember { SnackbarHostState() }
@@ -240,20 +248,64 @@ fun BrowserScreen(
 
     if (showCompressDialog) {
         var name by rememberSaveable { mutableStateOf("archive.zip") }
+        var password by remember { mutableStateOf("") }
+        var format by remember { mutableStateOf(CompressFormat.ZIP) }
+        val formatScroll = rememberScrollState()
+        val finalName = normalizeArchiveName(name.ifBlank { "archive" }, format)
         AlertDialog(
             onDismissRequest = { showCompressDialog = false },
             icon = { Icon(Icons.Filled.Archive, null) },
             title = { Text("Compress to archive") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().horizontalScroll(formatScroll),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        CompressFormat.entries.forEach { entry ->
+                            FilterChip(
+                                selected = format == entry,
+                                onClick = {
+                                    format = entry
+                                    name = normalizeArchiveName(name.ifBlank { "archive" }, entry)
+                                },
+                                label = { Text(entry.label) }
+                            )
+                        }
+                    }
                     OutlinedTextField(
                         value = name,
                         onValueChange = { name = it },
                         label = { Text("Archive name") },
                         singleLine = true
                     )
+                    PasswordField(
+                        value = password,
+                        onValueChange = { password = it },
+                        label = "Password (optional)"
+                    )
+                    if (format.supportsPassword) {
+                        Text(
+                            "Password protection uses AES-256 for ZIP and 7Z.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        Text(
+                            "Password is not supported for ${format.label} archives.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    if (!format.supportsPassword && password.isNotEmpty()) {
+                        Text(
+                            "Compression with a password will fail for ${format.label}. Clear the password or pick ZIP or 7Z.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
                     Text(
-                        "Will be created: ${state.currentDir.absolutePath}/$name",
+                        "Will be created: ${state.currentDir.absolutePath}/$finalName",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -261,9 +313,14 @@ fun BrowserScreen(
             },
             confirmButton = {
                 Button(onClick = {
+                    val chosenName = finalName
+                    val chosenPassword = password
+                    val chosenFormat = format
                     showCompressDialog = false
-                    vm.compressSelection(name) { r ->
-                        scope.launch { snackbar.showSnackbar(if (r.isSuccess) "Archive created" else "Compression failed") }
+                    vm.compressSelection(chosenName, chosenFormat, chosenPassword) { r ->
+                        scope.launch {
+                            snackbar.showSnackbar(vm.archiveOpMessage(r.exceptionOrNull(), "Archive created", "Compression failed"))
+                        }
                     }
                 }) { Text("Compress") }
             },
@@ -272,20 +329,160 @@ fun BrowserScreen(
     }
 
     pendingExtract?.let { file ->
+        var password by remember(file.absolutePath) { mutableStateOf("") }
         AlertDialog(
             onDismissRequest = { pendingExtract = null },
             icon = { Icon(Icons.Filled.FolderOpen, null) },
             title = { Text(file.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-            text = { Text("Extract this archive into the folder \"${file.nameWithoutExtension}\"?") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("Extract this archive into the folder \"${file.nameWithoutExtension}\"?")
+                    PasswordField(
+                        value = password,
+                        onValueChange = { password = it },
+                        label = "Password (if required)"
+                    )
+                }
+            },
             confirmButton = {
                 Button(onClick = {
+                    val chosenPassword = password
                     pendingExtract = null
-                    vm.extractArchive(file) { r ->
-                        scope.launch { snackbar.showSnackbar(if (r.isSuccess) "Extracted" else "Extraction failed") }
+                    vm.extractArchive(file, chosenPassword) { r ->
+                        scope.launch {
+                            snackbar.showSnackbar(vm.archiveOpMessage(r.exceptionOrNull(), "Extracted", "Extraction failed"))
+                        }
                     }
                 }) { Text("Extract") }
             },
-            dismissButton = { TextButton(onClick = { pendingExtract = null }) { Text("Cancel") } }
+            dismissButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(onClick = {
+                        pendingExtract = null
+                        vm.openPreview(file)
+                    }) { Text("Preview") }
+                    TextButton(onClick = {
+                        pendingExtract = null
+                        vm.verifyArchive(file)
+                    }) { Text("Verify") }
+                    TextButton(onClick = { pendingExtract = null }) { Text("Cancel") }
+                }
+            }
+        )
+    }
+
+    preview.file?.let { file ->
+        PreviewSheet(
+            fileName = file.name,
+            preview = preview,
+            onDismiss = vm::closePreview,
+            onVerify = { vm.verifyArchive(file, preview.passwordUsed) },
+            onUnlock = { password -> vm.openPreview(file, password) },
+            onExtract = {
+                val usedPassword = preview.passwordUsed
+                vm.closePreview()
+                vm.extractArchive(file, usedPassword) { r ->
+                    scope.launch {
+                        snackbar.showSnackbar(vm.archiveOpMessage(r.exceptionOrNull(), "Extracted", "Extraction failed"))
+                    }
+                }
+            }
+        )
+    }
+
+    LaunchedEffect(preview.error) {
+        val err = preview.error
+        if (preview.file != null && err != null && err != "Password required" && err != "Wrong password") {
+            snackbar.showSnackbar(err)
+        }
+    }
+
+    val verifyFile = verify.file
+    val verifyReport = verify.report
+    val verifyError = verify.error
+    if (verifyFile != null && !verify.isLoading && (verifyReport != null || verifyError != null)) {
+        var verifyPassword by remember(verifyFile.absolutePath, verify.passwordUsed) { mutableStateOf("") }
+        val needsVerifyPassword = (verifyReport?.passwordRequired == true) ||
+            verifyError == "Password required" || verifyError == "Wrong password"
+        AlertDialog(
+            onDismissRequest = vm::closeVerify,
+            icon = {
+                Icon(
+                    if (verifyReport != null && verifyReport.ok) Icons.Filled.Verified else Icons.Filled.ErrorOutline,
+                    null
+                )
+            },
+            title = { Text(verifyFile.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+            text = {
+                when {
+                    verifyError != null && !needsVerifyPassword -> Text(verifyError)
+                    verifyReport == null && !needsVerifyPassword -> Text("Verification failed")
+                    verifyReport != null && !verifyReport.passwordRequired && verifyReport.ok -> Text("Archive is OK (${verifyReport.entries} entries)")
+                    verifyReport != null && !verifyReport.passwordRequired -> {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("Archive is damaged (${verifyReport.failures.size} of ${verifyReport.entries} entries failed)")
+                            verifyReport.failures.take(5).forEach { failure ->
+                                Text(
+                                    "${failure.name}: ${failure.reason}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            if (verifyReport.failures.size > 5) {
+                                Text(
+                                    "...and ${verifyReport.failures.size - 5} more",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                    else -> {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Text(
+                                text = verifyError ?: "Password required",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = if (verifyError == "Wrong password") MaterialTheme.colorScheme.error
+                                else MaterialTheme.colorScheme.onSurface
+                            )
+                            PasswordField(
+                                value = verifyPassword,
+                                onValueChange = { verifyPassword = it },
+                                label = "Password"
+                            )
+                            Button(
+                                onClick = {
+                                    val entered = verifyPassword
+                                    verifyPassword = ""
+                                    vm.verifyArchive(verifyFile, entered)
+                                },
+                                enabled = verifyPassword.isNotEmpty()
+                            ) { Text("Verify with password") }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = vm::closeVerify) { Text("OK") }
+            }
+        )
+    }
+
+    if (archiveOpActive) {
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text("Working with archive") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    Text("Compressing or extracting...")
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { vm.cancelArchiveOp() }) { Text("Cancel") }
+            }
         )
     }
 
@@ -804,6 +1001,177 @@ private fun SortSheet(state: BrowserUiState, vm: BrowserViewModel, onDismiss: ()
                     icon = { Icon(Icons.Filled.GridView, null) },
                     label = { Text("Grid") }
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PasswordField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String = "Password"
+) {
+    var visible by remember { mutableStateOf(false) }
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        label = { Text(label) },
+        singleLine = true,
+        visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
+        trailingIcon = {
+            IconButton(onClick = { visible = !visible }) {
+                Icon(
+                    if (visible) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                    if (visible) "Hide password" else "Show password"
+                )
+            }
+        },
+        modifier = Modifier.fillMaxWidth()
+    )
+}
+
+@Composable
+private fun PreviewSheet(
+    fileName: String,
+    preview: ArchivePreviewUiState,
+    onDismiss: () -> Unit,
+    onVerify: () -> Unit,
+    onUnlock: (String) -> Unit,
+    onExtract: () -> Unit
+) {
+    var password by remember(fileName) { mutableStateOf("") }
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = fileName,
+                    style = MaterialTheme.typography.titleLarge,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(onClick = onVerify) { Text("Verify") }
+                FilledTonalButton(onClick = onExtract) {
+                    Icon(Icons.Filled.FolderOpen, null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Extract")
+                }
+            }
+            val listing = preview.listing
+            val needsPassword = preview.error == "Password required" ||
+                preview.error == "Wrong password" ||
+                (listing != null && listing.encrypted && preview.passwordUsed.isEmpty())
+            when {
+                preview.isLoading -> {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().height(160.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        LoadingIndicator()
+                    }
+                }
+                preview.error != null && !needsPassword -> {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(Icons.Filled.ErrorOutline, null, tint = MaterialTheme.colorScheme.error)
+                        Text(
+                            text = preview.error,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
+                needsPassword -> {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(Icons.Filled.Lock, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(
+                                text = preview.error ?: "Password required",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = if (preview.error == "Wrong password") MaterialTheme.colorScheme.error
+                                else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        PasswordField(
+                            value = password,
+                            onValueChange = { password = it },
+                            label = "Password"
+                        )
+                        Button(
+                            onClick = {
+                                val entered = password
+                                password = ""
+                                onUnlock(entered)
+                            },
+                            enabled = password.isNotEmpty()
+                        ) { Text("Unlock") }
+                    }
+                }
+                listing != null && listing.entries.isEmpty() -> {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().height(120.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "Archive is empty",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                listing != null -> {
+                    Text(
+                        text = "${listing.entries.size} items",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    LazyColumn(
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        items(listing.entries, key = { it.name }) { entry ->
+                            ListItem(
+                                leadingContent = {
+                                    Icon(
+                                        if (entry.isDir) Icons.Filled.Folder else Icons.AutoMirrored.Filled.InsertDriveFile,
+                                        null,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                },
+                                supportingContent = {
+                                    Text(
+                                        text = if (entry.isDir) "Folder" else formatSize(entry.size),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            ) {
+                                Text(
+                                    text = entry.name,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
     }

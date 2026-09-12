@@ -3,7 +3,7 @@ name = "karchiver_rs"
 version = "0.1.0"
 edition = "2024"
 description = "KArchiver Rust core: secure archive compress/extract/list"
-license = "GPL-3.0"
+license = "Apache-2.0"
 repository = "https://github.com/sysrv64/KArchiver"
 
 [lib]

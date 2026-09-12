@@ -11,14 +11,35 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.kerneldroid.karchiver.data.FileItem
 import com.kerneldroid.karchiver.data.FileSystemRepository
+import com.kerneldroid.karchiver.data.CompressFormat
 import com.kerneldroid.karchiver.data.FormatRegistry
+import com.kerneldroid.karchiver.data.normalizeArchiveName
+import com.kerneldroid.karchiver.data.PreviewListing
+import com.kerneldroid.karchiver.data.RustBridge
 import com.kerneldroid.karchiver.data.SortBy
+import com.kerneldroid.karchiver.data.TestReport
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import java.io.File
 
 enum class ViewMode { LIST, GRID }
+
+data class ArchivePreviewUiState(
+    val file: File? = null,
+    val isLoading: Boolean = false,
+    val listing: PreviewListing? = null,
+    val error: String? = null,
+    val passwordUsed: String = ""
+)
+
+data class VerifyUiState(
+    val file: File? = null,
+    val isLoading: Boolean = false,
+    val report: TestReport? = null,
+    val error: String? = null,
+    val passwordUsed: String = ""
+)
 
 data class BrowserUiState(
     val currentDir: File = Environment.getExternalStorageDirectory(),
@@ -44,6 +65,102 @@ class BrowserViewModel(
 
     private val _refreshing = MutableStateFlow(false)
     val refreshing: StateFlow<Boolean> = _refreshing
+
+    private val _archiveOpActive = MutableStateFlow(false)
+    val archiveOpActive: StateFlow<Boolean> = _archiveOpActive
+
+    private val _preview = MutableStateFlow(ArchivePreviewUiState())
+    val preview: StateFlow<ArchivePreviewUiState> = _preview
+
+    private val _verify = MutableStateFlow(VerifyUiState())
+    val verify: StateFlow<VerifyUiState> = _verify
+
+    private var previewToken = 0
+
+    fun openPreview(file: File, password: String = "") {
+        val token = ++previewToken
+        _preview.value = ArchivePreviewUiState(file = file, isLoading = true, passwordUsed = password)
+        viewModelScope.launch {
+            val result = repo.previewArchive(file, password.ifEmpty { null })
+            if (token != previewToken) return@launch
+            result.fold(
+                onSuccess = { listing ->
+                    _preview.value = ArchivePreviewUiState(file = file, listing = listing, passwordUsed = password)
+                },
+                onFailure = { e ->
+                    _preview.value = ArchivePreviewUiState(file = file, error = previewMessage(e), passwordUsed = password)
+                }
+            )
+        }
+    }
+
+    fun closePreview() {
+        previewToken++
+        _preview.value = ArchivePreviewUiState()
+    }
+
+    fun verifyArchive(file: File, password: String = "") {
+        _verify.value = VerifyUiState(file = file, isLoading = true, passwordUsed = password)
+        viewModelScope.launch {
+            _archiveOpActive.value = true
+            try {
+                val result = repo.testArchive(file, password.ifEmpty { null })
+                result.fold(
+                    onSuccess = { report ->
+                        _verify.value = VerifyUiState(file = file, report = report, passwordUsed = password)
+                    },
+                    onFailure = { e ->
+                        _verify.value = VerifyUiState(file = file, error = verifyMessage(e), passwordUsed = password)
+                    }
+                )
+            } finally {
+                _archiveOpActive.value = false
+            }
+        }
+    }
+
+    fun closeVerify() {
+        _verify.value = VerifyUiState()
+    }
+
+    private fun verifyMessage(e: Throwable): String {
+        val msg = e.message ?: ""
+        return when {
+            msg.contains("wrong password", ignoreCase = true) -> "Wrong password"
+            msg.contains("password required", ignoreCase = true) -> "Password required"
+            msg.contains("cancel", ignoreCase = true) -> "Cancelled"
+            else -> "Verification failed"
+        }
+    }
+
+    private fun previewMessage(e: Throwable): String {
+        val msg = e.message ?: ""
+        return when {
+            msg.contains("wrong password", ignoreCase = true) -> "Wrong password"
+            msg.contains("password required", ignoreCase = true) -> "Password required"
+            msg.contains("cancel", ignoreCase = true) -> "Cancelled"
+            msg.contains("unsupported", ignoreCase = true) -> "Preview not supported for this format"
+            else -> "Could not read archive"
+        }
+    }
+
+    fun archiveOpMessage(e: Throwable?, successText: String, failureText: String): String {
+        val msg = e?.message ?: ""
+        return when {
+            e == null -> successText
+            msg.contains("wrong password", ignoreCase = true) -> "Wrong password"
+            msg.contains("password required", ignoreCase = true) -> "Password required"
+            msg.contains("cancel", ignoreCase = true) -> "Cancelled"
+            else -> failureText
+        }
+    }
+
+    fun cancelArchiveOp() {
+        try {
+            RustBridge.cancel()
+        } catch (_: Throwable) {
+        }
+    }
 
     var clipboard by mutableStateOf<Pair<List<File>, Boolean>?>(null)
         private set
@@ -199,23 +316,34 @@ class BrowserViewModel(
         }
     }
 
-    fun compressSelection(name: String = "archive.zip", onDone: (Result<Unit>) -> Unit = {}) {
+    fun compressSelection(name: String = "archive.zip", format: CompressFormat = CompressFormat.ZIP, password: String = "", onDone: (Result<Unit>) -> Unit = {}) {
         val files = selectedFiles(); if (files.isEmpty()) return
         viewModelScope.launch {
-            val dest = File(_state.value.currentDir, name)
-            val r = repo.compress(files, dest)
-            clearSelection(); refresh(); onDone(r)
+            _archiveOpActive.value = true
+            try {
+                val safeName = normalizeArchiveName(name, format)
+                val dest = File(_state.value.currentDir, safeName)
+                val r = repo.compress(files, dest, format, password.ifEmpty { null })
+                clearSelection(); refresh(); onDone(r)
+            } finally {
+                _archiveOpActive.value = false
+            }
         }
     }
 
-    fun extractArchive(file: File, onDone: (Result<Unit>) -> Unit = {}) {
+    fun extractArchive(file: File, password: String = "", onDone: (Result<Unit>) -> Unit = {}) {
         if (!FormatRegistry.isArchive(file.extension)) {
             onDone(Result.failure(IllegalArgumentException("Not archive"))); return
         }
         viewModelScope.launch {
-            val dest = File(file.parentFile, file.nameWithoutExtension)
-            val r = repo.extract(file, dest)
-            refresh(); onDone(r)
+            _archiveOpActive.value = true
+            try {
+                val dest = File(file.parentFile, file.nameWithoutExtension)
+                val r = repo.extract(file, dest, password.ifEmpty { null })
+                refresh(); onDone(r)
+            } finally {
+                _archiveOpActive.value = false
+            }
         }
     }
 
