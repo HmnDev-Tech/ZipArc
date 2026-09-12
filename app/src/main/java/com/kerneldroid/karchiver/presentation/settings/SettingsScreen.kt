@@ -106,6 +106,9 @@ private fun SettingSwitch(
     SegmentedListItem(
         onClick = { onCheckedChange(!checked) },
         shapes = ListItemDefaults.segmentedShapes(index = index, count = count),
+        colors = ListItemDefaults.segmentedColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+        ),
         supportingContent = { Text(subtitle) },
         trailingContent = {
             Switch(checked = checked, onCheckedChange = onCheckedChange)

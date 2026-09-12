@@ -83,6 +83,9 @@ fun HomeScreen(
                         SegmentedListItem(
                             onClick = { onOpenPath(entry.path) },
                             shapes = ListItemDefaults.segmentedShapes(index = index, count = entries.size),
+                            colors = ListItemDefaults.segmentedColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                            ),
                             leadingContent = { Icon(entry.icon, null) },
                             trailingContent = { Icon(Icons.Filled.ChevronRight, null) },
                         ) {

@@ -16,7 +16,6 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -44,7 +43,6 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -177,6 +175,7 @@ fun BrowserScreen(
             )
             if (!state.isSelectionMode && vm.clipboard != null) {
                 ClipboardBottomBar(
+                    visible = true,
                     count = vm.clipboard?.first?.size ?: 0,
                     onPaste = {
                         vm.paste { r ->
@@ -535,7 +534,7 @@ private fun FileRow(
     val shape = RoundedCornerShape(if (selected) 16.dp else 12.dp)
     Surface(
         color = if (selected) MaterialTheme.colorScheme.primaryContainer
-        else MaterialTheme.colorScheme.surfaceContainer,
+        else MaterialTheme.colorScheme.surfaceContainerHigh,
         contentColor = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
         else MaterialTheme.colorScheme.onSurface,
         shape = shape,
@@ -552,7 +551,7 @@ private fun FileRow(
                         .clip(if (item.isDirectory) CircleShape else RoundedCornerShape(10.dp))
                         .background(
                             if (selected) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.surfaceContainerHigh
+                            else MaterialTheme.colorScheme.surfaceContainerHighest
                         ),
                     contentAlignment = Alignment.Center
                 ) {
@@ -607,7 +606,7 @@ private fun FileGridCard(
     val shape = RoundedCornerShape(if (selected) 20.dp else 16.dp)
     Surface(
         color = if (selected) MaterialTheme.colorScheme.primaryContainer
-        else MaterialTheme.colorScheme.surfaceContainer,
+        else MaterialTheme.colorScheme.surfaceContainerHigh,
         contentColor = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
         else MaterialTheme.colorScheme.onSurface,
         shape = shape,
@@ -625,7 +624,7 @@ private fun FileGridCard(
                 modifier = Modifier
                     .size(52.dp)
                     .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                    .background(MaterialTheme.colorScheme.surfaceContainerHighest),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
@@ -673,7 +672,45 @@ private fun SelectionBottomBar(
             modifier = Modifier
                 .fillMaxWidth()
                 .navigationBarsPadding()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .padding(horizontal = 12.dp, vertical = 12.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            HorizontalFloatingToolbar(
+                expanded = true,
+                content = {
+                    IconButton(onClick = onCopy) { Icon(Icons.Filled.ContentCopy, "Copy") }
+                    IconButton(onClick = onCut) { Icon(Icons.Filled.ContentCut, "Cut") }
+                    IconButton(onClick = onDelete) {
+                        Icon(Icons.Filled.Delete, "Delete", tint = MaterialTheme.colorScheme.error)
+                    }
+                    IconButton(onClick = onCompress) { Icon(Icons.Filled.Archive, "Compress") }
+                },
+                trailingContent = if (canExtract) {
+                    {
+                        FilledTonalButton(onClick = onExtract) {
+                            Icon(Icons.Filled.FolderOpen, null, Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Extract")
+                        }
+                    }
+                } else null
+            )
+        }
+    }
+}
+
+@Composable
+private fun ClipboardBottomBar(visible: Boolean, count: Int, onPaste: () -> Unit, onCancel: () -> Unit) {
+    AnimatedVisibility(
+        visible = visible,
+        enter = slideInVertically(initialOffsetY = { it / 2 }) + fadeIn(),
+        exit = slideOutVertically(targetOffsetY = { it / 2 }) + fadeOut()
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = 12.dp, vertical = 12.dp),
             contentAlignment = Alignment.Center
         ) {
             Surface(
@@ -683,78 +720,20 @@ private fun SelectionBottomBar(
                 shadowElevation = 6.dp
             ) {
                 Row(
-                    modifier = Modifier
-                        .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    modifier = Modifier.padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    PillAction(
-                        icon = Icons.Filled.ContentCopy,
-                        label = "Copy",
-                        tint = MaterialTheme.colorScheme.onSurface,
-                        onClick = onCopy
-                    )
-                    PillAction(
-                        icon = Icons.Filled.ContentCut,
-                        label = "Cut",
-                        tint = MaterialTheme.colorScheme.onSurface,
-                        onClick = onCut
-                    )
-                    PillAction(
-                        icon = Icons.Filled.Delete,
-                        label = "Delete",
-                        tint = MaterialTheme.colorScheme.error,
-                        onClick = onDelete
-                    )
-                    PillAction(
-                        icon = Icons.Filled.Archive,
-                        label = "Compress",
-                        tint = MaterialTheme.colorScheme.onSurface,
-                        onClick = onCompress
-                    )
-                    if (canExtract) {
-                        FilledTonalButton(onClick = onExtract) {
-                            Icon(Icons.Filled.FolderOpen, null, Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Extract")
-                        }
+                    Text("$count in clipboard", style = MaterialTheme.typography.labelLarge)
+                    FilledTonalButton(onClick = onPaste) {
+                        Icon(Icons.Filled.ContentPaste, null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Paste")
                     }
+                    IconButton(onClick = onCancel) { Icon(Icons.Filled.Close, "Cancel") }
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun PillAction(icon: ImageVector, label: String, tint: Color, onClick: () -> Unit) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier
-            .clip(RoundedCornerShape(16.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 6.dp)
-    ) {
-        Icon(icon, label, tint = tint, modifier = Modifier.size(22.dp))
-        Text(label, style = MaterialTheme.typography.labelSmall)
-    }
-}
-
-@Composable
-private fun ClipboardBottomBar(count: Int, onPaste: () -> Unit, onCancel: () -> Unit) {
-    BottomAppBar {
-        Text(
-            "$count in clipboard",
-            style = MaterialTheme.typography.labelLarge,
-            modifier = Modifier.padding(start = 12.dp)
-        )
-        Spacer(Modifier.weight(1f))
-        Button(onClick = onPaste) {
-            Icon(Icons.Filled.ContentPaste, null, Modifier.size(18.dp))
-            Spacer(Modifier.width(6.dp))
-            Text("Paste")
-        }
-        IconButton(onClick = onCancel) { Icon(Icons.Filled.Close, "Cancel") }
     }
 }
 
