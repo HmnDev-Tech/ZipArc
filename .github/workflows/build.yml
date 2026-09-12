@@ -43,6 +43,11 @@ jobs:
         with:
           targets: aarch64-linux-android
 
+      - name: Install Android target for pinned toolchain
+        run: |
+          TOOLCHAIN=$(grep -E '^\s*channel\s*=' rust/rust-toolchain.toml | cut -d'"' -f2)
+          rustup target add --toolchain "$TOOLCHAIN" aarch64-linux-android
+
       - name: Install cargo-ndk
         run: command -v cargo-ndk >/dev/null 2>&1 || cargo install cargo-ndk --locked
 
