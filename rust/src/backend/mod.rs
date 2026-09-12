@@ -13,7 +13,7 @@ use walkdir::WalkDir;
 
 use crate::error::{ArchiveError, Result};
 use crate::format::Format;
-use crate::io_util::{Limits, log_warn};
+use crate::io_util::{Limits, check_cancelled, log_warn};
 
 /// One file or directory selected for compression.
 #[derive(Debug, Clone)]
@@ -28,6 +28,47 @@ pub struct SourceEntry {
     pub size: u64,
 }
 
+#[derive(Debug, Clone)]
+pub struct PreviewEntry {
+    pub name: String,
+    pub size: u64,
+    pub is_dir: bool,
+    pub encrypted: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct PreviewListing {
+    pub entries: Vec<PreviewEntry>,
+    pub encrypted: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct TestFailure {
+    pub name: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct TestReport {
+    pub entries: usize,
+    pub total_size: u64,
+    pub failures: Vec<TestFailure>,
+    pub password_required: bool,
+}
+
+impl TestReport {
+    pub fn ok(&self) -> bool {
+        self.failures.is_empty() && !self.password_required
+    }
+}
+
+impl PreviewListing {
+    pub fn new(mut entries: Vec<PreviewEntry>) -> Self {
+        entries.sort_by(|a, b| a.name.cmp(&b.name));
+        let encrypted = entries.iter().any(|e| e.encrypted);
+        Self { entries, encrypted }
+    }
+}
 fn skipped(path: &Path, exclude: &[&Path]) -> bool {
     exclude.contains(&path)
 }
@@ -51,6 +92,7 @@ pub fn collect_sources(
         if md.is_dir() {
             let base = src.parent().unwrap_or_else(|| Path::new(""));
             for entry in WalkDir::new(src).follow_links(false).sort_by_file_name() {
+                check_cancelled()?;
                 let entry = entry.map_err(|e| {
                     let io_err = e
                         .into_io_error()
@@ -160,7 +202,6 @@ pub fn extract(archive: &Path, dest: &Path, format: Format, limits: &Limits) -> 
     }
 }
 
-/// List entry names inside `archive`.
 pub fn list(archive: &Path, format: Format) -> Result<Vec<String>> {
     match format {
         Format::Zip => zip::list(archive),
@@ -174,5 +215,109 @@ pub fn list(archive: &Path, format: Format) -> Result<Vec<String>> {
             "listing of {} is not supported",
             other.label()
         ))),
+    }
+}
+
+pub fn list_detailed(archive: &Path, format: Format) -> Result<PreviewListing> {
+    match format {
+        Format::Zip => zip::list_detailed(archive),
+        Format::SevenZ => sevenz::list_detailed(archive),
+        f if f.is_tar() => tar::list_detailed(archive, f),
+        f if f.is_single_stream() => single::list_detailed(archive, f),
+        Format::Rar => Err(ArchiveError::Unsupported(
+            "RAR listing is not supported by this engine".to_string(),
+        )),
+        other => Err(ArchiveError::Unsupported(format!(
+            "listing of {} is not supported",
+            other.label()
+        ))),
+    }
+}
+
+pub fn test_archive(archive: &Path, format: Format, limits: &Limits) -> Result<TestReport> {
+    match format {
+        Format::Zip => zip::test(archive, limits),
+        Format::SevenZ => sevenz::test(archive, limits),
+        f if f.is_tar() => tar::test(archive, f, limits),
+        f if f.is_single_stream() => single::test(archive, f, limits),
+        Format::Rar => Err(ArchiveError::Unsupported(
+            "RAR verification is not supported by this engine".to_string(),
+        )),
+        other => Err(ArchiveError::Unsupported(format!(
+            "verification of {} is not supported",
+            other.label()
+        ))),
+    }
+}
+
+fn reject_password<T>(format: Format, op: &str) -> Result<T> {
+    Err(ArchiveError::Unsupported(format!(
+        "password protection for {op} of {} is not supported",
+        format.label()
+    )))
+}
+
+pub fn compress_with_password(
+    sources: &[PathBuf],
+    dest: &Path,
+    format: Format,
+    limits: &Limits,
+    password: &str,
+) -> Result<()> {
+    if password.is_empty() {
+        return compress(sources, dest, format, limits);
+    }
+    match format {
+        Format::Zip => zip::compress_with_password(sources, dest, limits, password.as_bytes()),
+        Format::SevenZ => sevenz::compress_with_password(sources, dest, limits, password),
+        other => reject_password(other, "compression"),
+    }
+}
+
+pub fn extract_with_password(
+    archive: &Path,
+    dest: &Path,
+    format: Format,
+    limits: &Limits,
+    password: &str,
+) -> Result<()> {
+    if password.is_empty() {
+        return extract(archive, dest, format, limits);
+    }
+    match format {
+        Format::Zip => zip::extract_with_password(archive, dest, limits, password.as_bytes()),
+        Format::SevenZ => sevenz::extract_with_password(archive, dest, limits, password),
+        other => reject_password(other, "extraction"),
+    }
+}
+
+pub fn list_detailed_with_password(
+    archive: &Path,
+    format: Format,
+    password: &str,
+) -> Result<PreviewListing> {
+    if password.is_empty() {
+        return list_detailed(archive, format);
+    }
+    match format {
+        Format::Zip => zip::list_detailed_with_password(archive, password.as_bytes()),
+        Format::SevenZ => sevenz::list_detailed_with_password(archive, password),
+        other => reject_password(other, "listing"),
+    }
+}
+
+pub fn test_archive_with_password(
+    archive: &Path,
+    format: Format,
+    limits: &Limits,
+    password: &str,
+) -> Result<TestReport> {
+    if password.is_empty() {
+        return test_archive(archive, format, limits);
+    }
+    match format {
+        Format::Zip => zip::test_with_password(archive, limits, password.as_bytes()),
+        Format::SevenZ => sevenz::test_with_password(archive, limits, password),
+        other => reject_password(other, "verification"),
     }
 }

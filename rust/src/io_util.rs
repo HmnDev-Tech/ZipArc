@@ -6,15 +6,73 @@
 use std::fs::{self, File};
 use std::io::{self, BufWriter, Read, Write};
 use std::path::{Component, Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::error::{ArchiveError, LIMIT_MARKER, Result, classify_io};
+use crate::error::{ArchiveError, CANCEL_MARKER, LIMIT_MARKER, Result, classify_io};
 
 /// Permissions applied to extracted regular files (suid/sgid/sticky stripped).
 pub const FILE_MODE: u32 = 0o644;
 /// Permissions applied to extracted directories (suid/sgid/sticky stripped).
 pub const DIR_MODE: u32 = 0o755;
+
+pub const CANCEL_CHECK_INTERVAL: u64 = 65536;
+pub const CODE_OK: i32 = 0;
+pub const CODE_CANCELLED: i32 = 2;
+
+static CANCEL_FLAG: AtomicBool = AtomicBool::new(false);
+
+pub fn request_cancel() {
+    CANCEL_FLAG.store(true, Ordering::Relaxed);
+}
+
+pub fn clear_cancel() {
+    CANCEL_FLAG.store(false, Ordering::Relaxed);
+}
+
+pub fn is_cancelled() -> bool {
+    CANCEL_FLAG.load(Ordering::Relaxed)
+}
+
+pub fn check_cancelled() -> Result<()> {
+    if is_cancelled() {
+        Err(ArchiveError::Cancelled)
+    } else {
+        Ok(())
+    }
+}
+
+pub fn cancel_error() -> io::Error {
+    io::Error::other(CANCEL_MARKER)
+}
+
+pub struct CancelReader<R> {
+    inner: R,
+    since_check: u64,
+}
+
+impl<R> CancelReader<R> {
+    pub fn new(inner: R) -> Self {
+        Self {
+            inner,
+            since_check: 0,
+        }
+    }
+}
+
+impl<R: Read> Read for CancelReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        self.since_check += n as u64;
+        if self.since_check >= CANCEL_CHECK_INTERVAL {
+            self.since_check = 0;
+            if is_cancelled() {
+                return Err(cancel_error());
+            }
+        }
+        Ok(n)
+    }
+}
 
 /// How many bytes of an archive header are inspected for magic detection.
 pub const HEAD_BYTES: usize = 512;
@@ -190,6 +248,9 @@ impl<R: Read> LimitedReader<R> {
 
 impl<R: Read> Read for LimitedReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if is_cancelled() {
+            return Err(cancel_error());
+        }
         if self.remaining == 0 {
             let mut probe = [0u8; 1];
             return match self.inner.read(&mut probe) {
@@ -505,6 +566,15 @@ pub fn copy_limited<R: Read, W: io::Write>(
 /// Print a non-fatal warning (visible in logcat via stderr).
 pub fn log_warn(msg: impl std::fmt::Display) {
     eprintln!("[karchiver] {msg}");
+}
+
+pub fn wipe_bytes(buf: &mut [u8]) {
+    for i in 0..buf.len() {
+        unsafe {
+            std::ptr::write_volatile(buf.as_mut_ptr().add(i), 0);
+        }
+    }
+    std::hint::black_box(buf.as_ptr());
 }
 
 #[cfg(test)]

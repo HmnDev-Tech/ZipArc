@@ -11,7 +11,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 jni = { version = "0.21", features = ["invocation"] }
-zip = { version = "8.6", default-features = false, features = ["deflate", "bzip2", "lzma", "zstd"] }
+zip = { version = "8.6", default-features = false, features = ["deflate", "bzip2", "lzma", "zstd", "aes-crypto"] }
 sevenz-rust2 = { version = "0.22", default-features = false, features = ["aes256", "bzip2", "compress", "ppmd", "util", "deflate", "zstd", "lz4"] }
 tar = "0.4"
 flate2 = "1.1"

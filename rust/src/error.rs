@@ -11,6 +11,8 @@ use std::io;
 /// budget violation produced deep inside `std::io::copy` can be recognised
 /// again when it surfaces as an [`io::Error`].
 pub const LIMIT_MARKER: &str = "KARCHIVER_LIMIT";
+pub const CANCEL_MARKER: &str = "KARCHIVER_CANCELLED";
+pub const PASSWORD_MARKER: &str = "password required";
 
 /// Every failure mode the engine can produce.
 #[derive(Debug, thiserror::Error)]
@@ -33,6 +35,12 @@ pub enum ArchiveError {
     /// A backend-specific failure that does not fit another category.
     #[error("archive error: {0}")]
     Backend(String),
+    #[error("cancelled")]
+    Cancelled,
+    #[error("password required: {0}")]
+    PasswordRequired(String),
+    #[error("wrong password: {0}")]
+    WrongPassword(String),
 }
 
 /// Convenience alias used throughout the crate.
@@ -59,12 +67,24 @@ impl ArchiveError {
         ArchiveError::LimitExceeded(e.to_string())
     }
 
+    pub fn password_required(e: impl std::fmt::Display) -> Self {
+        ArchiveError::PasswordRequired(e.to_string())
+    }
+
+    pub fn wrong_password(e: impl std::fmt::Display) -> Self {
+        ArchiveError::WrongPassword(e.to_string())
+    }
+
     /// True for failures that must abort the whole operation instead of being
     /// collected and skipped.
     pub fn is_fatal(&self) -> bool {
         matches!(
             self,
-            ArchiveError::Security(_) | ArchiveError::LimitExceeded(_)
+            ArchiveError::Security(_)
+                | ArchiveError::LimitExceeded(_)
+                | ArchiveError::Cancelled
+                | ArchiveError::PasswordRequired(_)
+                | ArchiveError::WrongPassword(_)
         )
     }
 }
@@ -74,6 +94,8 @@ impl ArchiveError {
 pub fn classify_io(e: io::Error) -> ArchiveError {
     if e.kind() == io::ErrorKind::Other && e.to_string().contains(LIMIT_MARKER) {
         ArchiveError::limit(e)
+    } else if e.to_string().contains(CANCEL_MARKER) {
+        ArchiveError::Cancelled
     } else {
         ArchiveError::Io(e)
     }

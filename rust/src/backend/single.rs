@@ -15,11 +15,12 @@ use lzma_rust2::{XzOptions, XzReader, XzWriter};
 use zstd::stream::read::Decoder as ZstdDecoder;
 use zstd::stream::write::Encoder as ZstdEncoder;
 
+use crate::backend::{PreviewEntry, PreviewListing, TestFailure, TestReport};
 use crate::error::{ArchiveError, Result, classify_io};
 use crate::format::Format;
 use crate::io_util::{
-    AtomicFile, LimitState, LimitedReader, Limits, create_output_file, finish_bufwriter,
-    reject_symlink_ancestors, safe_join, set_file_mode,
+    AtomicFile, LimitState, LimitedReader, Limits, check_cancelled, create_output_file,
+    finish_bufwriter, reject_symlink_ancestors, safe_join, set_file_mode,
 };
 
 /// Compress a single regular file as a raw compressed stream.
@@ -54,6 +55,7 @@ pub fn compress(sources: &[PathBuf], dest: &Path, format: Format, limits: &Limit
         .open(af.path())?;
     let mut state = LimitState::new(limits);
     state.begin_entry(&name, Some(md.len()))?;
+    check_cancelled()?;
     let allowance = state.allowance(Some(md.len()));
     let mut limited = LimitedReader::new(BufReader::new(File::open(src)?), allowance);
     let buf = BufWriter::new(out);
@@ -135,6 +137,7 @@ pub fn extract(archive: &Path, dest: &Path, format: Format, limits: &Limits) -> 
 
     let mut state = LimitState::new(limits);
     state.begin_entry(&name, None)?;
+    check_cancelled()?;
     let allowance = state.allowance(None);
     let reader = open_decoder(archive, format)?;
     let mut limited = LimitedReader::new(reader, allowance);
@@ -150,4 +153,61 @@ pub fn extract(archive: &Path, dest: &Path, format: Format, limits: &Limits) -> 
 /// A single-stream archive contains one logical file.
 pub fn list(archive: &Path, _format: Format) -> Result<Vec<String>> {
     Ok(vec![output_name(archive)?])
+}
+
+pub fn list_detailed(archive: &Path, _format: Format) -> Result<PreviewListing> {
+    check_cancelled()?;
+    let name = output_name(archive)?;
+    let size = std::fs::metadata(archive).map(|m| m.len()).unwrap_or(0);
+    Ok(PreviewListing::new(vec![PreviewEntry {
+        name,
+        size,
+        is_dir: false,
+        encrypted: false,
+    }]))
+}
+
+pub fn test(archive: &Path, format: Format, limits: &Limits) -> Result<TestReport> {
+    check_cancelled()?;
+    let name = output_name(archive)?;
+    let mut state = LimitState::new(limits);
+    state.begin_entry(&name, None)?;
+    check_cancelled()?;
+    let allowance = state.allowance(None);
+    let reader = open_decoder(archive, format)?;
+    let mut limited = LimitedReader::new(reader, allowance);
+    let mut sink = io::sink();
+    match io::copy(&mut limited, &mut sink).map_err(classify_io) {
+        Ok(_) => {
+            let written = limited.count();
+            match state.finish_entry(&name, None, written) {
+                Ok(()) => Ok(TestReport {
+                    entries: 1,
+                    total_size: written,
+                    failures: Vec::new(),
+                    password_required: false,
+                }),
+                Err(e) if e.is_fatal() => Err(e),
+                Err(e) => Ok(TestReport {
+                    entries: 1,
+                    total_size: 0,
+                    failures: vec![TestFailure {
+                        name,
+                        reason: e.to_string(),
+                    }],
+                    password_required: false,
+                }),
+            }
+        }
+        Err(e) if e.is_fatal() => Err(e),
+        Err(e) => Ok(TestReport {
+            entries: 1,
+            total_size: 0,
+            failures: vec![TestFailure {
+                name,
+                reason: e.to_string(),
+            }],
+            password_required: false,
+        }),
+    }
 }

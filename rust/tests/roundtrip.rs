@@ -56,8 +56,28 @@ fn sevenz_roundtrip() {
 }
 
 #[test]
+fn tar_roundtrip() {
+    assert_roundtrip(Format::Tar, "out.tar");
+}
+
+#[test]
 fn tar_gz_roundtrip() {
     assert_roundtrip(Format::TarGz, "out.tar.gz");
+}
+
+#[test]
+fn tar_bz2_roundtrip() {
+    assert_roundtrip(Format::TarBz2, "out.tar.bz2");
+}
+
+#[test]
+fn tar_xz_roundtrip() {
+    assert_roundtrip(Format::TarXz, "out.tar.xz");
+}
+
+#[test]
+fn tar_zst_roundtrip() {
+    assert_roundtrip(Format::TarZst, "out.tar.zst");
 }
 
 #[test]

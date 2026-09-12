@@ -16,13 +16,15 @@ use tar::{Archive, Builder, EntryType, Header};
 use zstd::stream::read::Decoder as ZstdDecoder;
 use zstd::stream::write::Encoder as ZstdEncoder;
 
-use crate::backend::{SourceEntry, collect_sources};
+use crate::backend::{
+    PreviewEntry, PreviewListing, SourceEntry, TestFailure, TestReport, collect_sources,
+};
 use crate::error::{ArchiveError, Result, classify_io};
 use crate::format::Format;
 use crate::io_util::{
-    AtomicFile, LimitState, LimitedReader, Limits, create_dir_all_checked, create_output_file,
-    finish_bufwriter, log_warn, reject_symlink_ancestors, safe_join, safe_link_target,
-    set_file_mode,
+    AtomicFile, LimitState, LimitedReader, Limits, check_cancelled, create_dir_all_checked,
+    create_output_file, finish_bufwriter, log_warn, reject_symlink_ancestors, safe_join,
+    safe_link_target, set_file_mode,
 };
 
 fn add_entry<W: Write>(
@@ -30,6 +32,7 @@ fn add_entry<W: Write>(
     entry: &SourceEntry,
     state: &mut LimitState,
 ) -> Result<()> {
+    check_cancelled()?;
     let mut header = Header::new_gnu();
     if entry.is_dir {
         header.set_entry_type(EntryType::Directory);
@@ -78,6 +81,7 @@ pub fn compress(sources: &[PathBuf], dest: &Path, format: Format, limits: &Limit
         Format::Tar => {
             let mut builder = Builder::new(buf);
             for e in &entries {
+                check_cancelled()?;
                 add_entry(&mut builder, e, &mut state)?;
             }
             let inner = builder.into_inner().map_err(ArchiveError::backend)?;
@@ -87,6 +91,7 @@ pub fn compress(sources: &[PathBuf], dest: &Path, format: Format, limits: &Limit
             let enc = GzEncoder::new(buf, GzCompression::default());
             let mut builder = Builder::new(enc);
             for e in &entries {
+                check_cancelled()?;
                 add_entry(&mut builder, e, &mut state)?;
             }
             let enc = builder.into_inner().map_err(ArchiveError::backend)?;
@@ -97,6 +102,7 @@ pub fn compress(sources: &[PathBuf], dest: &Path, format: Format, limits: &Limit
             let enc = BzEncoder::new(buf, BzCompression::default());
             let mut builder = Builder::new(enc);
             for e in &entries {
+                check_cancelled()?;
                 add_entry(&mut builder, e, &mut state)?;
             }
             let enc = builder.into_inner().map_err(ArchiveError::backend)?;
@@ -107,6 +113,7 @@ pub fn compress(sources: &[PathBuf], dest: &Path, format: Format, limits: &Limit
             let enc = XzWriter::new(buf, XzOptions::with_preset(6))?;
             let mut builder = Builder::new(enc);
             for e in &entries {
+                check_cancelled()?;
                 add_entry(&mut builder, e, &mut state)?;
             }
             let enc = builder.into_inner().map_err(ArchiveError::backend)?;
@@ -117,6 +124,7 @@ pub fn compress(sources: &[PathBuf], dest: &Path, format: Format, limits: &Limit
             let enc = ZstdEncoder::new(buf, 3)?;
             let mut builder = Builder::new(enc);
             for e in &entries {
+                check_cancelled()?;
                 add_entry(&mut builder, e, &mut state)?;
             }
             let enc = builder.into_inner().map_err(ArchiveError::backend)?;
@@ -127,6 +135,7 @@ pub fn compress(sources: &[PathBuf], dest: &Path, format: Format, limits: &Limit
             let enc = FrameEncoder::new(buf);
             let mut builder = Builder::new(enc);
             for e in &entries {
+                check_cancelled()?;
                 add_entry(&mut builder, e, &mut state)?;
             }
             let enc = builder.into_inner().map_err(ArchiveError::backend)?;
@@ -169,6 +178,7 @@ fn extract_entry<R: Read>(
     root: &Path,
     state: &mut LimitState,
 ) -> Result<()> {
+    check_cancelled()?;
     let entry_type = entry.header().entry_type();
     let name = entry
         .path()
@@ -253,6 +263,7 @@ pub fn extract(archive: &Path, dest: &Path, format: Format, limits: &Limits) -> 
     let mut warnings: Vec<String> = Vec::new();
 
     for entry in entries {
+        check_cancelled()?;
         let mut entry = match entry {
             Ok(e) => e,
             Err(e) => {
@@ -288,4 +299,174 @@ pub fn list(archive: &Path, format: Format) -> Result<Vec<String>> {
         out.push(name);
     }
     Ok(out)
+}
+
+pub fn list_detailed(archive: &Path, format: Format) -> Result<PreviewListing> {
+    let reader = open_tar_reader(archive, format)?;
+    let mut tar = Archive::new(reader);
+    let mut out = Vec::new();
+    for entry in tar.entries().map_err(ArchiveError::backend)? {
+        check_cancelled()?;
+        let entry = entry.map_err(ArchiveError::backend)?;
+        let is_dir = entry.header().entry_type() == EntryType::Directory;
+        let name = entry
+            .path()
+            .map(|p| p.to_string_lossy().into_owned())
+            .map_err(ArchiveError::backend)?;
+        let size = if is_dir { 0 } else { entry.size() };
+        out.push(PreviewEntry {
+            name,
+            size,
+            is_dir,
+            encrypted: false,
+        });
+    }
+    Ok(PreviewListing::new(out))
+}
+
+fn test_link_target(entry: &tar::Entry<'_, impl Read>, name: &str) -> Result<()> {
+    let target = entry
+        .link_name()
+        .map_err(ArchiveError::backend)?
+        .ok_or_else(|| ArchiveError::invalid(format!("link '{name}' without target")))?;
+    let target = target.to_string_lossy().into_owned();
+    if target.is_empty() {
+        return Err(ArchiveError::invalid(format!(
+            "link '{name}' has empty target"
+        )));
+    }
+    if Path::new(&target).is_absolute() {
+        return Err(ArchiveError::security(format!(
+            "link '{name}' has absolute target"
+        )));
+    }
+    Ok(())
+}
+
+pub fn test(archive: &Path, format: Format, limits: &Limits) -> Result<TestReport> {
+    let reader = open_tar_reader(archive, format)?;
+    let mut tar = Archive::new(reader);
+    let entries = tar.entries().map_err(ArchiveError::backend)?;
+    let mut state = LimitState::new(limits);
+    let mut failures: Vec<TestFailure> = Vec::new();
+    let mut total_size: u64 = 0;
+    let mut count: usize = 0;
+
+    for entry in entries {
+        check_cancelled()?;
+        let mut entry = match entry {
+            Ok(e) => e,
+            Err(e) => {
+                failures.push(TestFailure {
+                    name: "tar entry".to_string(),
+                    reason: e.to_string(),
+                });
+                continue;
+            }
+        };
+        let entry_type = entry.header().entry_type();
+        let name = match entry.path().map(|p| p.to_string_lossy().into_owned()) {
+            Ok(n) => n,
+            Err(e) => {
+                failures.push(TestFailure {
+                    name: "tar entry".to_string(),
+                    reason: e.to_string(),
+                });
+                continue;
+            }
+        };
+        count += 1;
+        if entry_type == EntryType::Directory {
+            match state.begin_entry(&name, Some(0)) {
+                Ok(()) => {}
+                Err(e) if e.is_fatal() => return Err(e),
+                Err(e) => {
+                    failures.push(TestFailure {
+                        name,
+                        reason: e.to_string(),
+                    });
+                }
+            }
+            continue;
+        }
+        if entry_type == EntryType::Symlink || entry_type == EntryType::Link {
+            match test_link_target(&entry, &name)
+                .and_then(|_| crate::io_util::sanitize_entry_name(&name).map(|_| ()))
+            {
+                Ok(()) => {}
+                Err(e) if e.is_fatal() => return Err(e),
+                Err(e) => {
+                    failures.push(TestFailure {
+                        name,
+                        reason: e.to_string(),
+                    });
+                }
+            }
+            continue;
+        }
+        if !entry_type.is_file() {
+            failures.push(TestFailure {
+                name,
+                reason: format!("unsupported tar entry type {entry_type:?}"),
+            });
+            continue;
+        }
+        if crate::io_util::sanitize_entry_name(&name).is_err() {
+            failures.push(TestFailure {
+                name,
+                reason: "unsafe entry name".to_string(),
+            });
+            let mut sink = io::sink();
+            let _ = io::copy(&mut entry, &mut sink);
+            continue;
+        }
+        let declared = entry.size();
+        match state.begin_entry(&name, Some(declared)) {
+            Ok(()) => {}
+            Err(e) if e.is_fatal() => return Err(e),
+            Err(e) => {
+                failures.push(TestFailure {
+                    name,
+                    reason: e.to_string(),
+                });
+                let mut sink = io::sink();
+                let _ = io::copy(&mut entry, &mut sink);
+                continue;
+            }
+        }
+        let allowance = state.allowance(Some(declared));
+        let mut limited = LimitedReader::new(&mut entry, allowance);
+        let mut sink = io::sink();
+        match io::copy(&mut limited, &mut sink).map_err(classify_io) {
+            Ok(_) => {
+                let written = limited.count();
+                match state.finish_entry(&name, Some(declared), written) {
+                    Ok(()) => {
+                        total_size = total_size.saturating_add(written);
+                    }
+                    Err(e) if e.is_fatal() => return Err(e),
+                    Err(e) => {
+                        failures.push(TestFailure {
+                            name,
+                            reason: e.to_string(),
+                        });
+                    }
+                }
+            }
+            Err(e) if e.is_fatal() => return Err(e),
+            Err(e) => {
+                failures.push(TestFailure {
+                    name,
+                    reason: e.to_string(),
+                });
+            }
+        }
+    }
+
+    Ok(TestReport {
+        entries: count,
+        total_size,
+        failures,
+        password_required: false,
+    })
 }
