@@ -25,6 +25,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -34,6 +35,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -88,6 +90,7 @@ fun HomeScreen(
                     modifier = Modifier.fillMaxWidth().clip(shape)
                 ) {
                     ListItem(
+                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                         leadingContent = { Icon(entry.icon, null) },
                         trailingContent = { Icon(Icons.Filled.ChevronRight, null) },
                         modifier = Modifier.clickable { onOpenPath(entry.path) }

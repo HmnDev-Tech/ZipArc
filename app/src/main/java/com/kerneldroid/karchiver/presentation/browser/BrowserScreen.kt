@@ -125,7 +125,7 @@ fun BrowserScreen(
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
         floatingActionButton = {
-            if (!searchActive && !state.isSelectionMode) {
+            if (!searchActive && !state.isSelectionMode && vm.clipboard == null) {
                 CreateFabMenu(
                     onCreateFolder = { createKind = CreateKind.FOLDER },
                     onCreateFile = { createKind = CreateKind.FILE }
@@ -162,20 +162,6 @@ fun BrowserScreen(
                 }
             }
         },
-        bottomBar = {
-            if (!state.isSelectionMode && vm.clipboard != null) {
-                ClipboardBottomBar(
-                    visible = true,
-                    count = vm.clipboard?.first?.size ?: 0,
-                    onPaste = {
-                        vm.paste { r ->
-                            scope.launch { snackbar.showSnackbar(if (r.isSuccess) "Pasted" else "Paste failed") }
-                        }
-                    },
-                    onCancel = vm::cancelClipboard
-                )
-            }
-        }
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             if (state.isLoading) {
@@ -237,6 +223,20 @@ fun BrowserScreen(
                     },
                     onCompress = { showCompressDialog = true },
                     onExtract = { pendingExtract = singleArchive?.file }
+                )
+                ClipboardFloatingBar(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .navigationBarsPadding()
+                        .padding(end = 16.dp, bottom = 16.dp),
+                    visible = !state.isSelectionMode && vm.clipboard != null,
+                    count = vm.clipboard?.first?.size ?: 0,
+                    onPaste = {
+                        vm.paste { r ->
+                            scope.launch { snackbar.showSnackbar(if (r.isSuccess) "Pasted" else "Paste failed") }
+                        }
+                    },
+                    onCancel = vm::cancelClipboard
                 )
             }
         }
@@ -755,6 +755,7 @@ private fun FileRow(
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)
     ) {
         ListItem(
+            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
             leadingContent = {
                 Box(
                     modifier = Modifier
@@ -884,11 +885,11 @@ private fun SelectionBottomBar(
         HorizontalFloatingToolbar(
             expanded = true,
             colors = FloatingToolbarDefaults.standardFloatingToolbarColors(
-                toolbarContainerColor = Color.Transparent,
-                toolbarContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                toolbarContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                toolbarContentColor = MaterialTheme.colorScheme.onSurface
             ),
-            expandedShadowElevation = 0.dp,
-            collapsedShadowElevation = 0.dp,
+            expandedShadowElevation = 6.dp,
+            collapsedShadowElevation = 6.dp,
             content = {
                 IconButton(onClick = onCopy) { Icon(Icons.Filled.ContentCopy, "Copy") }
                 IconButton(onClick = onCut) { Icon(Icons.Filled.ContentCut, "Cut") }
@@ -899,10 +900,14 @@ private fun SelectionBottomBar(
             },
             trailingContent = if (canExtract) {
                 {
-                    FilledTonalButton(onClick = onExtract) {
-                        Icon(Icons.Filled.FolderOpen, null, Modifier.size(18.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("Extract")
+                    FilledTonalIconButton(
+                        onClick = onExtract,
+                        colors = IconButtonDefaults.filledTonalIconButtonColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    ) {
+                        Icon(Icons.Filled.FolderOpen, "Extract")
                     }
                 }
             } else null
@@ -911,37 +916,40 @@ private fun SelectionBottomBar(
 }
 
 @Composable
-private fun ClipboardBottomBar(visible: Boolean, count: Int, onPaste: () -> Unit, onCancel: () -> Unit) {
+private fun ClipboardFloatingBar(
+    visible: Boolean,
+    count: Int,
+    onPaste: () -> Unit,
+    onCancel: () -> Unit,
+    modifier: Modifier = Modifier
+) {
     AnimatedVisibility(
         visible = visible,
-        enter = slideInVertically(initialOffsetY = { it / 2 }) + fadeIn(),
-        exit = slideOutVertically(targetOffsetY = { it / 2 }) + fadeOut()
+        modifier = modifier,
+        enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+        exit = slideOutVertically(targetOffsetY = { it }) + fadeOut()
     ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .navigationBarsPadding()
-                .padding(horizontal = 12.dp, vertical = 12.dp),
-            contentAlignment = Alignment.Center
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            tonalElevation = 4.dp,
+            shadowElevation = 6.dp
         ) {
-            Surface(
-                shape = RoundedCornerShape(28.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                tonalElevation = 3.dp,
-                shadowElevation = 6.dp
+            Row(
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                Row(
-                    modifier = Modifier.padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                FilledTonalButton(
+                    onClick = onPaste,
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
                 ) {
-                    Text("$count in clipboard", style = MaterialTheme.typography.labelLarge)
-                    FilledTonalButton(onClick = onPaste) {
-                        Icon(Icons.Filled.ContentPaste, null, Modifier.size(18.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("Paste")
-                    }
-                    IconButton(onClick = onCancel) { Icon(Icons.Filled.Close, "Cancel") }
+                    Icon(Icons.Filled.ContentPaste, null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Paste ($count)")
+                }
+                IconButton(onClick = onCancel, modifier = Modifier.size(36.dp)) {
+                    Icon(Icons.Filled.Close, "Cancel", Modifier.size(18.dp))
                 }
             }
         }
