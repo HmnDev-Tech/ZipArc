@@ -14,7 +14,6 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -156,26 +155,6 @@ fun BrowserScreen(
             }
         },
         bottomBar = {
-            SelectionBottomBar(
-                visible = state.isSelectionMode,
-                canExtract = singleArchive != null,
-                onCopy = {
-                    haptics.performHapticFeedback(HapticFeedbackType.SegmentFrequentTick)
-                    vm.copySelection()
-                },
-                onCut = {
-                    haptics.performHapticFeedback(HapticFeedbackType.GestureThresholdActivate)
-                    vm.cutSelection()
-                },
-                onDelete = {
-                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                    vm.deleteSelection { r ->
-                        scope.launch { snackbar.showSnackbar(if (r.isSuccess) "Deleted" else "Delete failed") }
-                    }
-                },
-                onCompress = { showCompressDialog = true },
-                onExtract = { pendingExtract = singleArchive?.file }
-            )
             if (!state.isSelectionMode && vm.clipboard != null) {
                 ClipboardBottomBar(
                     visible = true,
@@ -226,6 +205,30 @@ fun BrowserScreen(
                     state = pullRefreshState,
                     isRefreshing = refreshing,
                     modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp)
+                )
+                SelectionBottomBar(
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .navigationBarsPadding()
+                        .padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
+                    visible = state.isSelectionMode,
+                    canExtract = singleArchive != null,
+                    onCopy = {
+                        haptics.performHapticFeedback(HapticFeedbackType.SegmentFrequentTick)
+                        vm.copySelection()
+                    },
+                    onCut = {
+                        haptics.performHapticFeedback(HapticFeedbackType.GestureThresholdActivate)
+                        vm.cutSelection()
+                    },
+                    onDelete = {
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        vm.deleteSelection { r ->
+                            scope.launch { snackbar.showSnackbar(if (r.isSuccess) "Deleted" else "Delete failed") }
+                        }
+                    },
+                    onCompress = { showCompressDialog = true },
+                    onExtract = { pendingExtract = singleArchive?.file }
                 )
             }
         }
@@ -493,7 +496,7 @@ private fun FileList(
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 12.dp, top = 8.dp, end = 12.dp, bottom = 96.dp),
-        verticalArrangement = Arrangement.spacedBy(2.dp)
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         items(state.items, key = { it.file.absolutePath }) { item ->
             FileRow(
@@ -549,7 +552,6 @@ private fun FileRow(
         contentColor = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
         else MaterialTheme.colorScheme.onSurface,
         shape = shape,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         modifier = modifier
             .fillMaxWidth()
             .clip(shape)
@@ -622,7 +624,6 @@ private fun FileGridCard(
         contentColor = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
         else MaterialTheme.colorScheme.onSurface,
         shape = shape,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         modifier = modifier
             .fillMaxWidth()
             .clip(shape)
@@ -668,6 +669,7 @@ private fun FileGridCard(
 
 @Composable
 private fun SelectionBottomBar(
+    modifier: Modifier = Modifier,
     visible: Boolean,
     canExtract: Boolean,
     onCopy: () -> Unit,
@@ -678,43 +680,36 @@ private fun SelectionBottomBar(
 ) {
     AnimatedVisibility(
         visible = visible,
+        modifier = modifier,
         enter = slideInVertically(initialOffsetY = { it / 2 }) + fadeIn(),
         exit = slideOutVertically(targetOffsetY = { it / 2 }) + fadeOut()
     ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .navigationBarsPadding()
-                .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 12.dp),
-            contentAlignment = Alignment.CenterStart
-        ) {
-            HorizontalFloatingToolbar(
-                expanded = true,
-                colors = FloatingToolbarDefaults.standardFloatingToolbarColors(
-                    toolbarContainerColor = Color.Transparent,
-                    toolbarContentColor = MaterialTheme.colorScheme.onSurfaceVariant
-                ),
-                expandedShadowElevation = 0.dp,
-                collapsedShadowElevation = 0.dp,
-                content = {
-                    IconButton(onClick = onCopy) { Icon(Icons.Filled.ContentCopy, "Copy") }
-                    IconButton(onClick = onCut) { Icon(Icons.Filled.ContentCut, "Cut") }
-                    IconButton(onClick = onDelete) {
-                        Icon(Icons.Filled.Delete, "Delete", tint = MaterialTheme.colorScheme.error)
+        HorizontalFloatingToolbar(
+            expanded = true,
+            colors = FloatingToolbarDefaults.standardFloatingToolbarColors(
+                toolbarContainerColor = Color.Transparent,
+                toolbarContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+            ),
+            expandedShadowElevation = 0.dp,
+            collapsedShadowElevation = 0.dp,
+            content = {
+                IconButton(onClick = onCopy) { Icon(Icons.Filled.ContentCopy, "Copy") }
+                IconButton(onClick = onCut) { Icon(Icons.Filled.ContentCut, "Cut") }
+                IconButton(onClick = onDelete) {
+                    Icon(Icons.Filled.Delete, "Delete", tint = MaterialTheme.colorScheme.error)
+                }
+                IconButton(onClick = onCompress) { Icon(Icons.Filled.Archive, "Compress") }
+            },
+            trailingContent = if (canExtract) {
+                {
+                    FilledTonalButton(onClick = onExtract) {
+                        Icon(Icons.Filled.FolderOpen, null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Extract")
                     }
-                    IconButton(onClick = onCompress) { Icon(Icons.Filled.Archive, "Compress") }
-                },
-                trailingContent = if (canExtract) {
-                    {
-                        FilledTonalButton(onClick = onExtract) {
-                            Icon(Icons.Filled.FolderOpen, null, Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Extract")
-                        }
-                    }
-                } else null
-            )
-        }
+                }
+            } else null
+        )
     }
 }
 

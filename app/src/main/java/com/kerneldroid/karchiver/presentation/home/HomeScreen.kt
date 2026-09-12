@@ -2,7 +2,6 @@ package com.kerneldroid.karchiver.presentation.home
 
 import android.os.Environment
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
@@ -86,7 +85,6 @@ fun HomeScreen(
                     color = MaterialTheme.colorScheme.surfaceContainerHigh,
                     contentColor = MaterialTheme.colorScheme.onSurface,
                     shape = shape,
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                     modifier = Modifier.fillMaxWidth().clip(shape)
                 ) {
                     ListItem(
