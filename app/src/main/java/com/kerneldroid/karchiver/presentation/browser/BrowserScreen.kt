@@ -8,9 +8,15 @@ package com.kerneldroid.karchiver.presentation.browser
 
 import android.os.Environment
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -27,6 +33,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.NoteAdd
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
@@ -36,6 +44,7 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -71,6 +80,7 @@ fun BrowserScreen(
     var showCompressDialog by remember { mutableStateOf(false) }
     var pendingExtract by remember { mutableStateOf<File?>(null) }
     var createKind by remember { mutableStateOf<CreateKind?>(null) }
+    val pullRefreshState = rememberPullToRefreshState()
 
     val selectedItems = state.items.filter { state.selected.contains(it.file.absolutePath) }
     val singleArchive = selectedItems.singleOrNull()?.takeIf { FormatRegistry.isArchive(it.extension) }
@@ -134,46 +144,39 @@ fun BrowserScreen(
                         itemCount = state.items.size,
                         showMainMenu = showMainMenu,
                         canGoUp = vm.canGoUp(),
-                        viewMode = state.viewMode,
                         onNavigateUp = { vm.navigateUp() },
                         onOpenHome = onOpenHome,
                         onOpenSettings = onOpenSettings,
                         onToggleSearch = { searchActive = true },
-                        onOpenSort = { showSortSheet = true },
-                        onToggleView = {
-                            vm.setViewMode(
-                                if (state.viewMode == ViewMode.LIST) ViewMode.GRID else ViewMode.LIST
-                            )
-                        },
-                        onRefresh = { vm.refresh() },
-                        onSelectAll = vm::selectAll
+                        onOpenSort = { showSortSheet = true }
                     )
                     Breadcrumbs(current = state.currentDir, onNavigate = vm::navigateTo)
                 }
             }
         },
         bottomBar = {
-            when {
-                state.isSelectionMode -> SelectionBottomBar(
-                    canExtract = singleArchive != null,
-                    onCopy = {
-                        haptics.performHapticFeedback(HapticFeedbackType.SegmentFrequentTick)
-                        vm.copySelection()
-                    },
-                    onCut = {
-                        haptics.performHapticFeedback(HapticFeedbackType.GestureThresholdActivate)
-                        vm.cutSelection()
-                    },
-                    onDelete = {
-                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                        vm.deleteSelection { r ->
-                            scope.launch { snackbar.showSnackbar(if (r.isSuccess) "Deleted" else "Delete failed") }
-                        }
-                    },
-                    onCompress = { showCompressDialog = true },
-                    onExtract = { pendingExtract = singleArchive?.file }
-                )
-                vm.clipboard != null -> ClipboardBottomBar(
+            SelectionBottomBar(
+                visible = state.isSelectionMode,
+                canExtract = singleArchive != null,
+                onCopy = {
+                    haptics.performHapticFeedback(HapticFeedbackType.SegmentFrequentTick)
+                    vm.copySelection()
+                },
+                onCut = {
+                    haptics.performHapticFeedback(HapticFeedbackType.GestureThresholdActivate)
+                    vm.cutSelection()
+                },
+                onDelete = {
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    vm.deleteSelection { r ->
+                        scope.launch { snackbar.showSnackbar(if (r.isSuccess) "Deleted" else "Delete failed") }
+                    }
+                },
+                onCompress = { showCompressDialog = true },
+                onExtract = { pendingExtract = singleArchive?.file }
+            )
+            if (!state.isSelectionMode && vm.clipboard != null) {
+                ClipboardBottomBar(
                     count = vm.clipboard?.first?.size ?: 0,
                     onPaste = {
                         vm.paste { r ->
@@ -189,20 +192,30 @@ fun BrowserScreen(
             if (state.isLoading) {
                 LinearWavyProgressIndicator(Modifier.fillMaxWidth())
             }
-            Box(Modifier.fillMaxSize()) {
-                when {
-                    state.isLoading && state.items.isEmpty() -> CenterLoading()
-                    state.items.isEmpty() -> EmptyState(query = state.query)
-                    state.viewMode == ViewMode.LIST -> FileList(
-                        state = state,
-                        onItemClick = handleItemClick,
-                        onItemLongClick = handleItemLongClick
-                    )
-                    else -> FileGrid(
-                        state = state,
-                        onItemClick = handleItemClick,
-                        onItemLongClick = handleItemLongClick
-                    )
+            PullToRefreshBox(
+                isRefreshing = state.isLoading,
+                onRefresh = {
+                    haptics.performHapticFeedback(HapticFeedbackType.Confirm)
+                    vm.refresh()
+                },
+                modifier = Modifier.fillMaxWidth().weight(1f),
+                state = pullRefreshState
+            ) {
+                Box(Modifier.fillMaxSize()) {
+                    when {
+                        state.isLoading && state.items.isEmpty() -> CenterLoading()
+                        state.items.isEmpty() -> EmptyState(query = state.query)
+                        state.viewMode == ViewMode.LIST -> FileList(
+                            state = state,
+                            onItemClick = handleItemClick,
+                            onItemLongClick = handleItemLongClick
+                        )
+                        else -> FileGrid(
+                            state = state,
+                            onItemClick = handleItemClick,
+                            onItemLongClick = handleItemLongClick
+                        )
+                    }
                 }
             }
         }
@@ -338,17 +351,12 @@ private fun BrowserTopBar(
     itemCount: Int,
     showMainMenu: Boolean,
     canGoUp: Boolean,
-    viewMode: ViewMode,
     onNavigateUp: () -> Unit,
     onOpenHome: () -> Unit,
     onOpenSettings: () -> Unit,
     onToggleSearch: () -> Unit,
-    onOpenSort: () -> Unit,
-    onToggleView: () -> Unit,
-    onRefresh: () -> Unit,
-    onSelectAll: () -> Unit
+    onOpenSort: () -> Unit
 ) {
-    var overflow by remember { mutableStateOf(false) }
     TopAppBar(
         title = {
             Column {
@@ -378,34 +386,8 @@ private fun BrowserTopBar(
         },
         actions = {
             IconButton(onClick = onToggleSearch) { Icon(Icons.Filled.Search, "Search") }
-            IconButton(onClick = onToggleView) {
-                Icon(
-                    if (viewMode == ViewMode.LIST) Icons.Filled.ViewAgenda else Icons.Filled.GridView,
-                    "View"
-                )
-            }
-            IconButton(onClick = onOpenSort) { Icon(Icons.Filled.SortByAlpha, "Sort") }
-            Box {
-                IconButton(onClick = { overflow = true }) { Icon(Icons.Filled.MoreVert, "More") }
-                DropdownMenu(expanded = overflow, onDismissRequest = { overflow = false }) {
-                    DropdownMenuItem(
-                        text = { Text("Refresh") },
-                        leadingIcon = { Icon(Icons.Filled.Refresh, null) },
-                        onClick = { overflow = false; onRefresh() }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Select all") },
-                        leadingIcon = { Icon(Icons.Filled.SelectAll, null) },
-                        onClick = { overflow = false; onSelectAll() }
-                    )
-                    HorizontalDivider()
-                    DropdownMenuItem(
-                        text = { Text("Settings") },
-                        leadingIcon = { Icon(Icons.Filled.Settings, null) },
-                        onClick = { overflow = false; onOpenSettings() }
-                    )
-                }
-            }
+            IconButton(onClick = onOpenSort) { Icon(Icons.Filled.SortByAlpha, "Sort and view") }
+            IconButton(onClick = onOpenSettings) { Icon(Icons.Filled.Settings, "Settings") }
         }
     )
 }
@@ -674,6 +656,7 @@ private fun FileGridCard(
 
 @Composable
 private fun SelectionBottomBar(
+    visible: Boolean,
     canExtract: Boolean,
     onCopy: () -> Unit,
     onCut: () -> Unit,
@@ -681,19 +664,79 @@ private fun SelectionBottomBar(
     onCompress: () -> Unit,
     onExtract: () -> Unit
 ) {
-    BottomAppBar {
-        IconButton(onClick = onCopy) { Icon(Icons.Filled.ContentCopy, "Copy") }
-        IconButton(onClick = onCut) { Icon(Icons.Filled.ContentCut, "Cut") }
-        IconButton(onClick = onDelete) { Icon(Icons.Filled.Delete, "Delete") }
-        IconButton(onClick = onCompress) { Icon(Icons.Filled.Archive, "Compress") }
-        Spacer(Modifier.weight(1f))
-        if (canExtract) {
-            FilledTonalButton(onClick = onExtract) {
-                Icon(Icons.Filled.FolderOpen, null, Modifier.size(18.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("Extract")
+    AnimatedVisibility(
+        visible = visible,
+        enter = slideInVertically(initialOffsetY = { it / 2 }) + fadeIn(),
+        exit = slideOutVertically(targetOffsetY = { it / 2 }) + fadeOut()
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Surface(
+                shape = RoundedCornerShape(28.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                tonalElevation = 3.dp,
+                shadowElevation = 6.dp
+            ) {
+                Row(
+                    modifier = Modifier
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    PillAction(
+                        icon = Icons.Filled.ContentCopy,
+                        label = "Copy",
+                        tint = MaterialTheme.colorScheme.onSurface,
+                        onClick = onCopy
+                    )
+                    PillAction(
+                        icon = Icons.Filled.ContentCut,
+                        label = "Cut",
+                        tint = MaterialTheme.colorScheme.onSurface,
+                        onClick = onCut
+                    )
+                    PillAction(
+                        icon = Icons.Filled.Delete,
+                        label = "Delete",
+                        tint = MaterialTheme.colorScheme.error,
+                        onClick = onDelete
+                    )
+                    PillAction(
+                        icon = Icons.Filled.Archive,
+                        label = "Compress",
+                        tint = MaterialTheme.colorScheme.onSurface,
+                        onClick = onCompress
+                    )
+                    if (canExtract) {
+                        FilledTonalButton(onClick = onExtract) {
+                            Icon(Icons.Filled.FolderOpen, null, Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Extract")
+                        }
+                    }
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun PillAction(icon: ImageVector, label: String, tint: Color, onClick: () -> Unit) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 6.dp)
+    ) {
+        Icon(icon, label, tint = tint, modifier = Modifier.size(22.dp))
+        Text(label, style = MaterialTheme.typography.labelSmall)
     }
 }
 
@@ -725,7 +768,7 @@ private fun SortSheet(state: BrowserUiState, vm: BrowserViewModel, onDismiss: ()
                 .padding(bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            Text("Sort", style = MaterialTheme.typography.titleLarge)
+            Text("Sort and view", style = MaterialTheme.typography.titleLarge)
             SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                 SortBy.entries.forEachIndexed { index, sort ->
                     SegmentedButton(

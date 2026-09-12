@@ -1,7 +1,7 @@
 package com.kerneldroid.karchiver.presentation.settings
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -9,12 +9,12 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedListItem
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -49,29 +49,36 @@ fun SettingsScreen(settings: AppSettings, repo: SettingsRepository, onBack: () -
                 .fillMaxSize()
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             SectionHeader("Interface")
-            SettingSwitch(
-                title = "Main menu",
-                subtitle = "Show a button that opens the main menu. By default the app opens a folder directly.",
-                checked = settings.showMainMenu,
-                onCheckedChange = { scope.launch { repo.setShowMainMenu(it) } }
-            )
-            HorizontalDivider()
-            SettingSwitch(
-                title = "Open last folder",
-                subtitle = "Return to the folder you were in when the app starts.",
-                checked = settings.openLastFolder,
-                onCheckedChange = { scope.launch { repo.setOpenLastFolder(it) } }
-            )
-            HorizontalDivider()
-            SettingSwitch(
-                title = "Hide hidden files",
-                subtitle = "Do not show files and folders whose name starts with a dot.",
-                checked = settings.hideHidden,
-                onCheckedChange = { scope.launch { repo.setHideHidden(it) } }
-            )
-            HorizontalDivider()
+            Column(verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap)) {
+                SettingSwitch(
+                    index = 0,
+                    count = 3,
+                    title = "Main menu",
+                    subtitle = "Show a button that opens the main menu. By default the app opens a folder directly.",
+                    checked = settings.showMainMenu,
+                    onCheckedChange = { scope.launch { repo.setShowMainMenu(it) } }
+                )
+                SettingSwitch(
+                    index = 1,
+                    count = 3,
+                    title = "Open last folder",
+                    subtitle = "Return to the folder you were in when the app starts.",
+                    checked = settings.openLastFolder,
+                    onCheckedChange = { scope.launch { repo.setOpenLastFolder(it) } }
+                )
+                SettingSwitch(
+                    index = 2,
+                    count = 3,
+                    title = "Hide hidden files",
+                    subtitle = "Do not show files and folders whose name starts with a dot.",
+                    checked = settings.hideHidden,
+                    onCheckedChange = { scope.launch { repo.setHideHidden(it) } }
+                )
+            }
         }
     }
 }
@@ -83,23 +90,26 @@ private fun SectionHeader(title: String) {
         style = MaterialTheme.typography.titleSmall,
         color = MaterialTheme.colorScheme.primary,
         fontWeight = FontWeight.SemiBold,
-        modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 4.dp)
+        modifier = Modifier.padding(top = 4.dp, bottom = 4.dp)
     )
 }
 
 @Composable
 private fun SettingSwitch(
+    index: Int,
+    count: Int,
     title: String,
     subtitle: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit
 ) {
-    ListItem(
+    SegmentedListItem(
+        onClick = { onCheckedChange(!checked) },
+        shapes = ListItemDefaults.segmentedShapes(index = index, count = count),
         supportingContent = { Text(subtitle) },
         trailingContent = {
             Switch(checked = checked, onCheckedChange = onCheckedChange)
         },
-        modifier = Modifier.clickable { onCheckedChange(!checked) }
     ) {
         Text(title)
     }
