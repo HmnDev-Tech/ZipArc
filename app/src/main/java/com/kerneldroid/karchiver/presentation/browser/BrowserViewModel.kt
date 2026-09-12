@@ -42,6 +42,9 @@ class BrowserViewModel(
     private val _state = MutableStateFlow(BrowserUiState(currentDir = rootDir))
     val state: StateFlow<BrowserUiState> = _state
 
+    private val _refreshing = MutableStateFlow(false)
+    val refreshing: StateFlow<Boolean> = _refreshing
+
     var clipboard by mutableStateOf<Pair<List<File>, Boolean>?>(null)
         private set
 
@@ -65,6 +68,7 @@ class BrowserViewModel(
         val s = _state.value
         val token = ++loadToken
         _state.value = s.copy(isLoading = true)
+        _refreshing.value = true
         viewModelScope.launch {
             val items = repo.listDir(s.currentDir, s.sortBy, s.ascending)
                 .asSequence()
@@ -77,6 +81,7 @@ class BrowserViewModel(
                 isLoading = false,
                 selected = if (s.isSelectionMode) s.selected else emptySet()
             )
+            _refreshing.value = false
         }
     }
 

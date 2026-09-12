@@ -14,6 +14,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -33,6 +34,7 @@ import androidx.compose.material.icons.automirrored.filled.NoteAdd
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -68,6 +70,7 @@ fun BrowserScreen(
     onOpenSettings: () -> Unit
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
+    val refreshing by vm.refreshing.collectAsStateWithLifecycle()
     val haptics = LocalHapticFeedback.current
     val context = LocalContext.current
     val snackbar = remember { SnackbarHostState() }
@@ -191,31 +194,39 @@ fun BrowserScreen(
             if (state.isLoading) {
                 LinearWavyProgressIndicator(Modifier.fillMaxWidth())
             }
-            PullToRefreshBox(
-                isRefreshing = state.isLoading,
-                onRefresh = {
-                    haptics.performHapticFeedback(HapticFeedbackType.Confirm)
-                    vm.refresh()
-                },
-                modifier = Modifier.fillMaxWidth().weight(1f),
-                state = pullRefreshState
-            ) {
-                Box(Modifier.fillMaxSize()) {
-                    when {
-                        state.isLoading && state.items.isEmpty() -> CenterLoading()
-                        state.items.isEmpty() -> EmptyState(query = state.query)
-                        state.viewMode == ViewMode.LIST -> FileList(
-                            state = state,
-                            onItemClick = handleItemClick,
-                            onItemLongClick = handleItemLongClick
-                        )
-                        else -> FileGrid(
-                            state = state,
-                            onItemClick = handleItemClick,
-                            onItemLongClick = handleItemLongClick
-                        )
+            Box(Modifier.fillMaxWidth().weight(1f)) {
+                PullToRefreshBox(
+                    isRefreshing = refreshing,
+                    onRefresh = {
+                        haptics.performHapticFeedback(HapticFeedbackType.Confirm)
+                        vm.refresh()
+                    },
+                    state = pullRefreshState,
+                    modifier = Modifier.fillMaxSize(),
+                    indicator = {}
+                ) {
+                    Box(Modifier.fillMaxSize()) {
+                        when {
+                            state.isLoading && state.items.isEmpty() -> CenterLoading()
+                            state.items.isEmpty() -> EmptyState(query = state.query)
+                            state.viewMode == ViewMode.LIST -> FileList(
+                                state = state,
+                                onItemClick = handleItemClick,
+                                onItemLongClick = handleItemLongClick
+                            )
+                            else -> FileGrid(
+                                state = state,
+                                onItemClick = handleItemClick,
+                                onItemLongClick = handleItemLongClick
+                            )
+                        }
                     }
                 }
+                PullToRefreshDefaults.LoadingIndicator(
+                    state = pullRefreshState,
+                    isRefreshing = refreshing,
+                    modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp)
+                )
             }
         }
     }
@@ -538,6 +549,7 @@ private fun FileRow(
         contentColor = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
         else MaterialTheme.colorScheme.onSurface,
         shape = shape,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         modifier = modifier
             .fillMaxWidth()
             .clip(shape)
@@ -610,6 +622,7 @@ private fun FileGridCard(
         contentColor = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
         else MaterialTheme.colorScheme.onSurface,
         shape = shape,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         modifier = modifier
             .fillMaxWidth()
             .clip(shape)
@@ -672,11 +685,17 @@ private fun SelectionBottomBar(
             modifier = Modifier
                 .fillMaxWidth()
                 .navigationBarsPadding()
-                .padding(horizontal = 12.dp, vertical = 12.dp),
-            contentAlignment = Alignment.Center
+                .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 12.dp),
+            contentAlignment = Alignment.CenterStart
         ) {
             HorizontalFloatingToolbar(
                 expanded = true,
+                colors = FloatingToolbarDefaults.standardFloatingToolbarColors(
+                    toolbarContainerColor = Color.Transparent,
+                    toolbarContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                ),
+                expandedShadowElevation = 0.dp,
+                collapsedShadowElevation = 0.dp,
                 content = {
                     IconButton(onClick = onCopy) { Icon(Icons.Filled.ContentCopy, "Copy") }
                     IconButton(onClick = onCut) { Icon(Icons.Filled.ContentCut, "Cut") }
