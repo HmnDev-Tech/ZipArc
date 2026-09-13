@@ -164,7 +164,7 @@ fun SettingsScreen(
                                         .weight(1f)
                                         .semantics { role = Role.RadioButton }
                                 ) {
-                                    Text(option.label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Icon(option.icon, option.label)
                                 }
                             }
                         }
@@ -220,17 +220,19 @@ fun SettingsScreen(
                         containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
                     ),
                     supportingContent = {
-                        Text(
-                            if (settings.dynamicColor || settings.seedColor == null) "Dynamic"
-                            else seedColors.firstOrNull { it.color.value.toLong() == settings.seedColor }?.name
-                                ?: "Custom",
-                            modifier = Modifier.padding(bottom = 8.dp)
-                        )
-                        LazyRow(
-                            horizontalArrangement = Arrangement.spacedBy(2.dp),
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
                             modifier = Modifier.padding(bottom = 4.dp)
                         ) {
-                            itemsIndexed(seedColors) { index, seed ->
+                            Text(
+                                if (settings.dynamicColor || settings.seedColor == null) "Dynamic"
+                                else seedColors.firstOrNull { it.color.value.toLong() == settings.seedColor }?.name
+                                    ?: "Custom"
+                            )
+                            LazyRow(
+                                horizontalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
+                                itemsIndexed(seedColors) { index, seed ->
                                 val argb = seed.color.value.toLong()
                                 val selected = !settings.dynamicColor && settings.seedColor == argb
                                 ToggleButton(
@@ -270,6 +272,7 @@ fun SettingsScreen(
                                 }
                             }
                         }
+                    }
                     }
                 ) {
                     Text("Custom color")
