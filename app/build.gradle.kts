@@ -16,6 +16,9 @@ android {
         versionName = "1.0.0-alpha01"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        ndk {
+            abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+        }
         vectorDrawables {
             useSupportLibrary = true
         }
@@ -33,9 +36,6 @@ android {
         debug {
             isMinifyEnabled = false
             isShrinkResources = false
-            ndk {
-                abiFilters += listOf("arm64-v8a")
-            }
         }
     }
     compileOptions {
@@ -95,13 +95,15 @@ dependencies {
 
 tasks.register<Exec>("cargoBuild") {
     workingDir = file("../rust")
-    commandLine("sh", "-c", """
-        set +e
-        echo "[cargoBuild] single ABI arm64 for debug (fast)"
-        cargo ndk -t arm64-v8a -o ../app/src/main/jniLibs build --lib 2>&1 || echo "[cargoBuild] fallback to Kotlin zip (cargo ndk failed)"
-        mkdir -p ../app/src/main/jniLibs/arm64-v8a 2>/dev/null || true
-        exit 0
-    """.trimIndent())
-    isIgnoreExitValue = true
+    commandLine(
+        "cargo", "ndk",
+        "-t", "armeabi-v7a",
+        "-t", "arm64-v8a",
+        "-t", "x86",
+        "-t", "x86_64",
+        "--platform", "26",
+        "-o", "../app/src/main/jniLibs",
+        "build", "--lib"
+    )
 }
 tasks.named("preBuild") { dependsOn("cargoBuild") }
