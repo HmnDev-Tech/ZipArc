@@ -72,6 +72,8 @@ import java.util.Locale
 
 private enum class CreateKind { FOLDER, FILE }
 
+private const val SCROLL_TOP_JUMP_THRESHOLD = 12
+
 @Composable
 fun BrowserScreen(
     vm: BrowserViewModel,
@@ -141,15 +143,24 @@ fun BrowserScreen(
         floatingActionButton = {
             if (!searchActive && !state.isSelectionMode && vm.clipboard == null) {
                 Column(
-                    horizontalAlignment = Alignment.End,
+                    horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     ScrollTopButton(
                         visible = showScrollTop,
                         onClick = {
                             scope.launch {
-                                if (state.viewMode == ViewMode.LIST) listState.animateScrollToItem(0)
-                                else gridState.animateScrollToItem(0)
+                                if (state.viewMode == ViewMode.LIST) {
+                                    if (listState.firstVisibleItemIndex > SCROLL_TOP_JUMP_THRESHOLD) {
+                                        listState.scrollToItem(SCROLL_TOP_JUMP_THRESHOLD)
+                                    }
+                                    listState.animateScrollToItem(0)
+                                } else {
+                                    if (gridState.firstVisibleItemIndex > SCROLL_TOP_JUMP_THRESHOLD) {
+                                        gridState.scrollToItem(SCROLL_TOP_JUMP_THRESHOLD)
+                                    }
+                                    gridState.animateScrollToItem(0)
+                                }
                             }
                         }
                     )
@@ -561,12 +572,14 @@ fun BrowserScreen(
 private fun ScrollTopButton(visible: Boolean, onClick: () -> Unit) {
     AnimatedVisibility(
         visible = visible,
-        enter = fadeIn(animationSpec = MaterialTheme.motionScheme.fastEffectsSpec()) +
-            scaleIn(animationSpec = MaterialTheme.motionScheme.fastSpatialSpec()),
-        exit = fadeOut(animationSpec = MaterialTheme.motionScheme.fastEffectsSpec()) +
-            scaleOut(animationSpec = MaterialTheme.motionScheme.fastSpatialSpec())
+        enter = slideInVertically() + scaleIn(),
+        exit = slideOutVertically() + scaleOut()
     ) {
-        SmallFloatingActionButton(onClick = onClick) {
+        SmallFloatingActionButton(
+            onClick = onClick,
+            containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+            contentColor = MaterialTheme.colorScheme.onTertiaryContainer
+        ) {
             Icon(Icons.Filled.KeyboardArrowUp, "Scroll to top")
         }
     }
