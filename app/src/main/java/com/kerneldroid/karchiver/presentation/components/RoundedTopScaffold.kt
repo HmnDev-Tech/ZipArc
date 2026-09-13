@@ -52,7 +52,7 @@ fun RoundedTopScaffold(
                         .widthIn(max = maxContentWidth)
                         .padding(top = innerPadding.calculateTopPadding()),
                     shape = RoundedCornerShape(topStart = TopCornerRadius, topEnd = TopCornerRadius),
-                    color = MaterialTheme.colorScheme.surfaceContainerLowest
+                    color = MaterialTheme.colorScheme.surface
                 ) {
                     content(
                         PaddingValues(
