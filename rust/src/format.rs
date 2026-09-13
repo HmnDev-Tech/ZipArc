@@ -83,6 +83,9 @@ impl Format {
     /// Identify by file name suffix. Compound suffixes are checked first.
     pub fn from_extension(name: &str) -> Option<Format> {
         let lower = name.to_ascii_lowercase();
+        if is_split_zip_suffix(&lower) {
+            return Some(Format::Zip);
+        }
         // Ordered longest / most specific first.
         for (suffix, format) in [
             (".tar.gz", Format::TarGz),
@@ -151,6 +154,26 @@ impl Format {
         }
         None
     }
+}
+
+fn is_split_zip_suffix(lower: &str) -> bool {
+    if let Some(i) = lower.rfind(".zip.") {
+        let tail = &lower[i + 5..];
+        if !tail.is_empty() && tail.bytes().all(|b| b.is_ascii_digit()) {
+            return true;
+        }
+    }
+    if let Some(i) = lower.rfind(".z") {
+        let tail = &lower[i + 2..];
+        if !lower.ends_with(".zip")
+            && !tail.is_empty()
+            && tail.bytes().all(|b| b.is_ascii_digit())
+            && !lower[..i].is_empty()
+        {
+            return true;
+        }
+    }
+    false
 }
 
 /// Combine extension and magic detection.

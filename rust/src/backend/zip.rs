@@ -1,7 +1,8 @@
 //! ZIP read/write backend.
 
+use std::collections::HashMap;
 use std::fs::File;
-use std::io::{self, BufReader, BufWriter, Read, Write};
+use std::io::{self, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use crate::backend::collect_sources;
@@ -16,6 +17,248 @@ use ::zip::read::ZipFile;
 use ::zip::result::ZipError;
 use ::zip::write::{FileOptions, SimpleFileOptions};
 use ::zip::{AesMode, CompressionMethod, ZipArchive, ZipReadOptions, ZipWriter};
+
+/// Supported split naming: classic `base.z01, base.z02, ..., base.zip` and dotted `base.zip.001, base.zip.002, ...`; given any span path, resolves the ordered segment list, or None for a single-file archive.
+fn resolve_split_segments(path: &Path) -> Result<Option<Vec<PathBuf>>> {
+    let dir: PathBuf = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."));
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    if let Some(base) = classic_split_base(&name) {
+        return resolve_classic(&dir, &base);
+    }
+    if let Some(base) = dotted_split_base(&name) {
+        return resolve_dotted(&dir, &base);
+    }
+    Ok(None)
+}
+
+fn classic_split_base(name: &str) -> Option<String> {
+    if let Some(stem) = name.strip_suffix(".zip") {
+        if stem.is_empty() {
+            return None;
+        }
+        return Some(stem.to_string());
+    }
+    match name.rfind(".z") {
+        Some(i) => {
+            let base = &name[..i];
+            let tail = &name[i + 2..];
+            if base.is_empty() || tail.is_empty() || !tail.bytes().all(|b| b.is_ascii_digit()) {
+                return None;
+            }
+            Some(base.to_string())
+        }
+        None => None,
+    }
+}
+
+fn dotted_split_base(name: &str) -> Option<String> {
+    match name.rfind(".zip.") {
+        Some(i) => {
+            let tail = &name[i + 5..];
+            if tail.is_empty() || !tail.bytes().all(|b| b.is_ascii_digit()) {
+                return None;
+            }
+            Some(name[..i + 4].to_string())
+        }
+        None => None,
+    }
+}
+
+fn sibling_map(dir: &Path) -> HashMap<String, PathBuf> {
+    let mut out = HashMap::new();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let lower = entry.file_name().to_string_lossy().to_ascii_lowercase();
+            out.insert(lower, entry.path());
+        }
+    }
+    out
+}
+
+fn resolve_classic(dir: &Path, base: &str) -> Result<Option<Vec<PathBuf>>> {
+    let siblings = sibling_map(dir);
+    let mut parts: HashMap<u32, PathBuf> = HashMap::new();
+    for (lower, full) in &siblings {
+        if lower.len() > base.len() && lower.starts_with(base) {
+            let rest = &lower[base.len()..];
+            if rest.starts_with(".z")
+                && rest.len() > 2
+                && rest[2..].bytes().all(|b| b.is_ascii_digit())
+                && let Ok(v) = rest[2..].parse::<u32>()
+            {
+                parts.insert(v, full.clone());
+            }
+        }
+    }
+    if parts.is_empty() {
+        return Ok(None);
+    }
+    let mut indices: Vec<u32> = parts.keys().copied().collect();
+    indices.sort_unstable();
+    if indices[0] != 1 {
+        return Err(ArchiveError::invalid(format!(
+            "missing split segment: {}",
+            dir.join(format!("{base}.z01")).display()
+        )));
+    }
+    for w in indices.windows(2) {
+        if w[1] != w[0] + 1 {
+            return Err(ArchiveError::invalid(format!(
+                "missing split segment: {}",
+                dir.join(format!("{base}.z{:02}", w[0] + 1)).display()
+            )));
+        }
+    }
+    let mut out: Vec<PathBuf> = indices.iter().map(|i| parts[i].clone()).collect();
+    match siblings.get(&format!("{base}.zip")) {
+        Some(last) => out.push(last.clone()),
+        None => {
+            return Err(ArchiveError::invalid(format!(
+                "missing split segment: {}",
+                dir.join(format!("{base}.zip")).display()
+            )));
+        }
+    }
+    Ok(Some(out))
+}
+
+fn resolve_dotted(dir: &Path, base: &str) -> Result<Option<Vec<PathBuf>>> {
+    let siblings = sibling_map(dir);
+    let mut parts: HashMap<u32, PathBuf> = HashMap::new();
+    for (lower, full) in &siblings {
+        if lower.len() > base.len() && lower.starts_with(base) {
+            let rest = &lower[base.len()..];
+            if rest.starts_with('.')
+                && rest.len() > 1
+                && rest[1..].bytes().all(|b| b.is_ascii_digit())
+                && let Ok(v) = rest[1..].parse::<u32>()
+            {
+                parts.insert(v, full.clone());
+            }
+        }
+    }
+    if parts.is_empty() {
+        return Ok(None);
+    }
+    let mut indices: Vec<u32> = parts.keys().copied().collect();
+    indices.sort_unstable();
+    if indices[0] != 1 {
+        return Err(ArchiveError::invalid(format!(
+            "missing split segment: {}",
+            dir.join(format!("{base}.001")).display()
+        )));
+    }
+    for w in indices.windows(2) {
+        if w[1] != w[0] + 1 {
+            return Err(ArchiveError::invalid(format!(
+                "missing split segment: {}",
+                dir.join(format!("{base}.{:03}", w[0] + 1)).display()
+            )));
+        }
+    }
+    Ok(Some(indices.iter().map(|i| parts[i].clone()).collect()))
+}
+
+struct ConcatReader {
+    files: Vec<File>,
+    sizes: Vec<u64>,
+    pos: u64,
+    total: u64,
+}
+
+impl ConcatReader {
+    fn open(paths: &[PathBuf]) -> io::Result<Self> {
+        let mut files = Vec::with_capacity(paths.len());
+        let mut sizes = Vec::with_capacity(paths.len());
+        let mut total = 0u64;
+        for p in paths {
+            let f = File::open(p)?;
+            let len = f.metadata()?.len();
+            total = total.saturating_add(len);
+            files.push(f);
+            sizes.push(len);
+        }
+        Ok(Self {
+            files,
+            sizes,
+            pos: 0,
+            total,
+        })
+    }
+
+    fn locate(&self) -> (usize, u64) {
+        let mut base = 0u64;
+        for (i, s) in self.sizes.iter().enumerate() {
+            if self.pos < base.saturating_add(*s) {
+                return (i, self.pos.saturating_sub(base));
+            }
+            base = base.saturating_add(*s);
+        }
+        let last = self.files.len().saturating_sub(1);
+        (last, *self.sizes.last().unwrap_or(&0))
+    }
+}
+
+impl Read for ConcatReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if buf.is_empty() || self.pos >= self.total || self.files.is_empty() {
+            return Ok(0);
+        }
+        let mut done = 0usize;
+        while done < buf.len() && self.pos < self.total {
+            let (idx, off) = self.locate();
+            let end = self.sizes[idx];
+            if off >= end {
+                break;
+            }
+            self.files[idx].seek(SeekFrom::Start(off))?;
+            let room = buf.len() - done;
+            let cap = (end - off).min(room as u64) as usize;
+            let n = self.files[idx].read(&mut buf[done..done + cap])?;
+            if n == 0 {
+                break;
+            }
+            done += n;
+            self.pos = self.pos.saturating_add(n as u64);
+        }
+        Ok(done)
+    }
+}
+
+impl Seek for ConcatReader {
+    fn seek(&mut self, style: SeekFrom) -> io::Result<u64> {
+        let target: i128 = match style {
+            SeekFrom::Start(n) => n as i128,
+            SeekFrom::End(n) => self.total as i128 + n as i128,
+            SeekFrom::Current(n) => self.pos as i128 + n as i128,
+        };
+        if target < 0 || target > self.total as i128 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "seek outside split archive",
+            ));
+        }
+        self.pos = target as u64;
+        Ok(self.pos)
+    }
+}
+
+fn open_single(archive: &Path) -> Result<ZipArchive<BufReader<File>>> {
+    let file = File::open(archive)?;
+    ZipArchive::new(BufReader::new(file)).map_err(ArchiveError::backend)
+}
+
+fn open_split(segments: &[PathBuf]) -> Result<ZipArchive<BufReader<ConcatReader>>> {
+    let reader = ConcatReader::open(segments)?;
+    ZipArchive::new(BufReader::new(reader)).map_err(ArchiveError::backend)
+}
 
 fn map_open_err(e: ZipError) -> ArchiveError {
     match e {
@@ -139,14 +382,30 @@ fn extract_impl(
 ) -> Result<()> {
     std::fs::create_dir_all(dest)?;
     let dest_root = std::fs::canonicalize(dest)?;
-    let file = File::open(archive)?;
-    let mut zip = ZipArchive::new(BufReader::new(file)).map_err(ArchiveError::backend)?;
+    match resolve_split_segments(archive)? {
+        None => {
+            let mut zip = open_single(archive)?;
+            extract_entries(&mut zip, &dest_root, limits, password)
+        }
+        Some(segments) => {
+            let mut zip = open_split(&segments)?;
+            extract_entries(&mut zip, &dest_root, limits, password)
+        }
+    }
+}
+
+fn extract_entries<R: Read + Seek>(
+    zip: &mut ZipArchive<R>,
+    dest_root: &Path,
+    limits: &Limits,
+    password: Option<&[u8]>,
+) -> Result<()> {
     let mut state = LimitState::new(limits);
     let mut warnings: Vec<String> = Vec::new();
 
     for i in 0..zip.len() {
         check_cancelled()?;
-        let mut entry = match open_entry(&mut zip, i, password) {
+        let mut entry = match open_entry(zip, i, password) {
             Ok(e) => e,
             Err(e) if e.is_fatal() => return Err(e),
             Err(e) => {
@@ -158,8 +417,8 @@ fn extract_impl(
         let declared = entry.size();
 
         if entry.is_dir() {
-            match safe_join(&dest_root, &name)
-                .and_then(|out| create_dir_all_checked(&dest_root, &out))
+            match safe_join(dest_root, &name)
+                .and_then(|out| create_dir_all_checked(dest_root, &out))
             {
                 Ok(()) => {}
                 Err(e) if e.is_fatal() => return Err(e),
@@ -169,7 +428,7 @@ fn extract_impl(
         }
 
         if entry.is_symlink() {
-            match extract_symlink(&mut entry, &name, &dest_root) {
+            match extract_symlink(&mut entry, &name, dest_root) {
                 Ok(()) => {}
                 Err(e) if e.is_fatal() => return Err(e),
                 Err(e) => warnings.push(format!("{name}: {e}")),
@@ -178,12 +437,12 @@ fn extract_impl(
         }
 
         let result = (|| -> Result<()> {
-            let out = safe_join(&dest_root, &name)?;
+            let out = safe_join(dest_root, &name)?;
             let parent = out
                 .parent()
                 .ok_or_else(|| ArchiveError::invalid("entry has no parent"))?;
-            create_dir_all_checked(&dest_root, parent)?;
-            reject_symlink_ancestors(&dest_root, &out)?;
+            create_dir_all_checked(dest_root, parent)?;
+            reject_symlink_ancestors(dest_root, &out)?;
             state.begin_entry(&name, Some(declared))?;
             state.check_ratio(&name, entry.compressed_size(), declared)?;
 
@@ -210,7 +469,7 @@ fn extract_impl(
     Ok(())
 }
 
-fn open_entry<'a, R: Read + std::io::Seek>(
+fn open_entry<'a, R: Read + Seek>(
     zip: &'a mut ZipArchive<R>,
     index: usize,
     password: Option<&[u8]>,
@@ -243,8 +502,19 @@ fn extract_symlink<R: Read>(entry: &mut R, name: &str, root: &Path) -> Result<()
 }
 
 pub fn list_detailed(archive: &Path) -> Result<PreviewListing> {
-    let file = File::open(archive)?;
-    let mut zip = ZipArchive::new(BufReader::new(file)).map_err(ArchiveError::backend)?;
+    match resolve_split_segments(archive)? {
+        None => {
+            let mut zip = open_single(archive)?;
+            detailed_entries(&mut zip)
+        }
+        Some(segments) => {
+            let mut zip = open_split(&segments)?;
+            detailed_entries(&mut zip)
+        }
+    }
+}
+
+fn detailed_entries<R: Read + Seek>(zip: &mut ZipArchive<R>) -> Result<PreviewListing> {
     let mut out = Vec::with_capacity(zip.len());
     for i in 0..zip.len() {
         check_cancelled()?;
@@ -265,8 +535,19 @@ pub fn list_detailed_with_password(archive: &Path, _password: &[u8]) -> Result<P
 }
 
 pub fn list(archive: &Path) -> Result<Vec<String>> {
-    let file = File::open(archive)?;
-    let mut zip = ZipArchive::new(BufReader::new(file)).map_err(ArchiveError::backend)?;
+    match resolve_split_segments(archive)? {
+        None => {
+            let mut zip = open_single(archive)?;
+            list_entries(&mut zip)
+        }
+        Some(segments) => {
+            let mut zip = open_split(&segments)?;
+            list_entries(&mut zip)
+        }
+    }
+}
+
+fn list_entries<R: Read + Seek>(zip: &mut ZipArchive<R>) -> Result<Vec<String>> {
     let mut out = Vec::with_capacity(zip.len());
     for i in 0..zip.len() {
         let entry = zip.by_index_raw(i).map_err(ArchiveError::backend)?;
@@ -287,8 +568,23 @@ pub fn test_with_password(archive: &Path, limits: &Limits, password: &[u8]) -> R
 }
 
 fn test_impl(archive: &Path, limits: &Limits, password: Option<&[u8]>) -> Result<TestReport> {
-    let file = File::open(archive)?;
-    let mut zip = ZipArchive::new(BufReader::new(file)).map_err(ArchiveError::backend)?;
+    match resolve_split_segments(archive)? {
+        None => {
+            let mut zip = open_single(archive)?;
+            test_entries(&mut zip, limits, password)
+        }
+        Some(segments) => {
+            let mut zip = open_split(&segments)?;
+            test_entries(&mut zip, limits, password)
+        }
+    }
+}
+
+fn test_entries<R: Read + Seek>(
+    zip: &mut ZipArchive<R>,
+    limits: &Limits,
+    password: Option<&[u8]>,
+) -> Result<TestReport> {
     let total = zip.len();
     let mut state = LimitState::new(limits);
     let mut failures: Vec<TestFailure> = Vec::new();
@@ -296,7 +592,7 @@ fn test_impl(archive: &Path, limits: &Limits, password: Option<&[u8]>) -> Result
 
     for i in 0..total {
         check_cancelled()?;
-        let mut entry = match open_entry(&mut zip, i, password) {
+        let mut entry = match open_entry(zip, i, password) {
             Ok(e) => e,
             Err(e) if e.is_fatal() => return Err(e),
             Err(e) => {
