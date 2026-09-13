@@ -693,11 +693,14 @@ private fun FileList(
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 12.dp, top = 8.dp, end = 12.dp, bottom = 96.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+        verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap)
     ) {
-        items(state.items, key = { it.file.absolutePath }) { item ->
+        items(state.items.size, key = { state.items[it].file.absolutePath }) { index ->
+            val item = state.items[index]
             FileRow(
                 item = item,
+                index = index,
+                count = state.items.size,
                 selected = state.selected.contains(item.file.absolutePath),
                 onClick = { onItemClick(item) },
                 onLongClick = { onItemLongClick(item) },
@@ -737,26 +740,23 @@ private fun FileGrid(
 @Composable
 private fun FileRow(
     item: FileItem,
+    index: Int,
+    count: Int,
     selected: Boolean,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val shape = RoundedCornerShape(if (selected) 16.dp else 12.dp)
-    Surface(
-        color = if (selected) MaterialTheme.colorScheme.primaryContainer
-        else MaterialTheme.colorScheme.surfaceContainerHigh,
-        contentColor = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
-        else MaterialTheme.colorScheme.onSurface,
-        shape = shape,
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(shape)
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
-    ) {
-        ListItem(
-            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-            leadingContent = {
+    SegmentedListItem(
+        onClick = onClick,
+        onLongClick = onLongClick,
+        shapes = ListItemDefaults.segmentedShapes(index = index, count = count),
+        colors = ListItemDefaults.segmentedColors(
+            containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer
+            else MaterialTheme.colorScheme.surfaceContainerHigh
+        ),
+        modifier = modifier,
+        leadingContent = {
                 Box(
                     modifier = Modifier
                         .size(40.dp)
@@ -804,7 +804,6 @@ private fun FileRow(
                 overflow = TextOverflow.Ellipsis
             )
         }
-    }
 }
 
 @Composable
