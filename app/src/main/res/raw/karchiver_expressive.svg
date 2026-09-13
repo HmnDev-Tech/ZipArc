@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 886 668" width="886" height="668">
+  <defs>
+    <linearGradient id="backGrad" x1="0%" y1="0%" x2="0%" y2="260" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#2a8dfe"/>
+      <stop offset="35%" stop-color="#1e81fd"/>
+      <stop offset="70%" stop-color="#0a70f4"/>
+      <stop offset="100%" stop-color="#005fe4"/>
+    </linearGradient>
+    <linearGradient id="paperGrad" x1="0%" y1="134" x2="0%" y2="200" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="40%" stop-color="#f5f8fe"/>
+      <stop offset="75%" stop-color="#e5f0fe"/>
+      <stop offset="100%" stop-color="#d3e5fd"/>
+    </linearGradient>
+    <linearGradient id="frontBaseGrad" x1="0%" y1="184" x2="0%" y2="666" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#006beb"/>
+      <stop offset="40%" stop-color="#0450c6"/>
+      <stop offset="68%" stop-color="#0e3a93"/>
+      <stop offset="100%" stop-color="#1e2c69"/>
+    </linearGradient>
+    <linearGradient id="frontTopGrad" x1="0%" y1="184" x2="0%" y2="524" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#4ea2fe"/>
+      <stop offset="28%" stop-color="#3491fe"/>
+      <stop offset="65%" stop-color="#147ef9"/>
+      <stop offset="90%" stop-color="#006ef0"/>
+      <stop offset="100%" stop-color="#0064ec"/>
+    </linearGradient>
+    <radialGradient id="pinkCenterGlow" cx="443" cy="184" r="260" gradientUnits="userSpaceOnUse"
+                    gradientTransform="matrix(1 0 0 0.65 0 64.4)">
+      <stop offset="0%" stop-color="#ffbdec" stop-opacity="0.75"/>
+      <stop offset="25%" stop-color="#e0b4ff" stop-opacity="0.50"/>
+      <stop offset="55%" stop-color="#8bb9ff" stop-opacity="0.22"/>
+      <stop offset="85%" stop-color="#4ea2fe" stop-opacity="0.05"/>
+      <stop offset="100%" stop-color="#4ea2fe" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="rimGrad" x1="0%" y1="0%" x2="886" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0"/>
+      <stop offset="10%" stop-color="#ffffff" stop-opacity="0.6"/>
+      <stop offset="50%" stop-color="#ffffff" stop-opacity="0.95"/>
+      <stop offset="90%" stop-color="#ffffff" stop-opacity="0.6"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <clipPath id="frontPanelClip">
+      <rect x="0" y="184" width="886" height="482" rx="96" ry="106"/>
+    </clipPath>
+  </defs>
+  <path d="M 32 300
+           L 32 96
+           C 32 38, 72 0, 122 0
+           L 334 0
+           C 382 0, 396 70, 442 70
+           L 780 70
+           C 824 70, 853 112, 853 140
+           L 853 300
+           Z" fill="url(#backGrad)"/>
+  <path d="M 68 230
+           L 68 184
+           C 68 138, 98 134, 134 134
+           L 752 134
+           C 788 134, 818 138, 818 184
+           L 818 230
+           Z" fill="url(#paperGrad)"/>
+  <path d="M 72 184
+           C 72 140, 100 135, 134 135
+           L 752 135
+           C 786 135, 814 140, 814 184"
+        fill="none" stroke="#ffffff" stroke-width="1.5" opacity="0.85"/>
+  <rect x="0" y="184" width="886" height="482" rx="96" ry="106" fill="url(#frontBaseGrad)"/>
+  <g clip-path="url(#frontPanelClip)">
+    <path d="M -10 170
+             L 896 170
+             L 896 260
+             C 886 420, 806 524, 726 524
+             L 160 524
+             C 80 524, 0 420, -10 260
+             Z" fill="url(#frontTopGrad)"/>
+    <rect x="0" y="184" width="886" height="350" fill="url(#pinkCenterGlow)"/>
+    <path d="M 15 240
+             C 25 195, 60 185, 100 185
+             L 786 185
+             C 826 185, 861 195, 871 240"
+          fill="none" stroke="url(#rimGrad)" stroke-width="3"/>
+  </g>
+</svg>
