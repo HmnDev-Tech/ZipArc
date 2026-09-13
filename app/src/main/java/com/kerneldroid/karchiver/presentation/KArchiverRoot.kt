@@ -11,6 +11,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -46,6 +47,7 @@ fun KArchiverRoot() {
     val recents by settingsRepo.recentFolders.collectAsStateWithLifecycle(initialValue = emptyList())
     var ready by remember { mutableStateOf(false) }
     var historyPrimed by remember { mutableStateOf(false) }
+    var barLifted by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(settings) {
         val s = settings ?: return@LaunchedEffect
@@ -95,6 +97,8 @@ fun KArchiverRoot() {
             BrowserScreen(
                 vm = vm,
                 showMainMenu = settings?.showMainMenu == true,
+                barLifted = barLifted,
+                onToggleBar = { barLifted = !barLifted },
                 onOpenHome = { navController.navigate(RootRoute.HOME) },
                 onOpenSettings = { navController.navigate(RootRoute.SETTINGS) }
             )
@@ -107,14 +111,18 @@ fun KArchiverRoot() {
                 },
                 onOpenSettings = { navController.navigate(RootRoute.SETTINGS) },
                 onBack = { navController.popBackStack() },
-                recentFolders = recents
+                recentFolders = recents,
+                barLifted = barLifted,
+                onToggleBar = { barLifted = !barLifted }
             )
         }
         composable(RootRoute.SETTINGS) {
             SettingsScreen(
                 settings = settings ?: AppSettings(),
                 repo = settingsRepo,
-                onBack = { navController.popBackStack() }
+                onBack = { navController.popBackStack() },
+                barLifted = barLifted,
+                onToggleBar = { barLifted = !barLifted }
             )
         }
     }

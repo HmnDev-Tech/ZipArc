@@ -22,21 +22,36 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.kerneldroid.karchiver.data.AppSettings
 import com.kerneldroid.karchiver.data.SettingsRepository
 import com.kerneldroid.karchiver.presentation.components.RoundedTopScaffold
+import com.kerneldroid.karchiver.presentation.components.detectBarHold
 import kotlinx.coroutines.launch
 
 @Composable
-fun SettingsScreen(settings: AppSettings, repo: SettingsRepository, onBack: () -> Unit) {
+fun SettingsScreen(
+    settings: AppSettings,
+    repo: SettingsRepository,
+    onBack: () -> Unit,
+    barLifted: Boolean = false,
+    onToggleBar: () -> Unit = {}
+) {
     BackHandler { onBack() }
     val scope = rememberCoroutineScope()
+    val haptics = LocalHapticFeedback.current
 
     RoundedTopScaffold(
+        barLifted = barLifted,
         topBar = {
             TopAppBar(
+                modifier = Modifier.detectBarHold {
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onToggleBar()
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = Color.Transparent,
                     scrolledContainerColor = Color.Transparent

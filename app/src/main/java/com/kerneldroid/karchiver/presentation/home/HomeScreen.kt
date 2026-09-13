@@ -53,7 +53,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -61,6 +63,7 @@ import com.kerneldroid.karchiver.data.VolumeStats
 import com.kerneldroid.karchiver.data.formatBytes
 import com.kerneldroid.karchiver.data.loadVolumeStats
 import com.kerneldroid.karchiver.presentation.components.RoundedTopScaffold
+import com.kerneldroid.karchiver.presentation.components.detectBarHold
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -73,10 +76,13 @@ fun HomeScreen(
     onOpenPath: (String) -> Unit,
     onOpenSettings: () -> Unit,
     onBack: () -> Unit,
-    recentFolders: List<String> = emptyList()
+    recentFolders: List<String> = emptyList(),
+    barLifted: Boolean = false,
+    onToggleBar: () -> Unit = {}
 ) {
     BackHandler { onBack() }
     val context = LocalContext.current
+    val haptics = LocalHapticFeedback.current
     val entries = remember { homeEntries() }
     val recents = remember(recentFolders) {
         recentFolders.filter { File(it).isDirectory }.take(3)
@@ -86,8 +92,13 @@ fun HomeScreen(
     }
 
     RoundedTopScaffold(
+        barLifted = barLifted,
         topBar = {
             TopAppBar(
+                modifier = Modifier.detectBarHold {
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onToggleBar()
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = Color.Transparent,
                     scrolledContainerColor = Color.Transparent

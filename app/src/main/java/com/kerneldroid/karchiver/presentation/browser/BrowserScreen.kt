@@ -65,6 +65,7 @@ import com.kerneldroid.karchiver.data.FormatRegistry
 import com.kerneldroid.karchiver.data.SortBy
 import com.kerneldroid.karchiver.data.normalizeArchiveName
 import com.kerneldroid.karchiver.presentation.components.RoundedTopScaffold
+import com.kerneldroid.karchiver.presentation.components.detectBarHold
 import kotlinx.coroutines.launch
 import java.io.File
 import java.text.SimpleDateFormat
@@ -79,6 +80,8 @@ private const val SCROLL_TOP_JUMP_THRESHOLD = 12
 fun BrowserScreen(
     vm: BrowserViewModel,
     showMainMenu: Boolean,
+    barLifted: Boolean,
+    onToggleBar: () -> Unit,
     onOpenHome: () -> Unit,
     onOpenSettings: () -> Unit
 ) {
@@ -140,6 +143,7 @@ fun BrowserScreen(
     }
 
     RoundedTopScaffold(
+        barLifted = barLifted,
         snackbarHost = { SnackbarHost(snackbar) },
         floatingActionButton = {
             if (!searchActive && !state.isSelectionMode && vm.clipboard == null) {
@@ -173,6 +177,12 @@ fun BrowserScreen(
             }
         },
         topBar = {
+            Box(
+                Modifier.detectBarHold {
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onToggleBar()
+                }
+            ) {
             if (searchActive) {
                 SearchTopBar(
                     query = state.query,
@@ -200,6 +210,7 @@ fun BrowserScreen(
                     )
                     Breadcrumbs(current = state.currentDir, onNavigate = vm::navigateTo)
                 }
+            }
             }
         },
     ) { padding ->
