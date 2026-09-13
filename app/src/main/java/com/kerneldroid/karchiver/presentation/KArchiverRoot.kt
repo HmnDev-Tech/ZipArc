@@ -57,9 +57,11 @@ fun KArchiverRoot() {
             s.hideHidden,
             s.defaultSort,
             if (s.defaultView == "grid") ViewMode.GRID else ViewMode.LIST,
-            s.foldersFirst
+            s.foldersFirst,
+            s.rarEnabled
         )
         vm.setHideHidden(s.hideHidden)
+        vm.setRarEnabled(s.rarEnabled)
         ready = true
     }
 
@@ -120,6 +122,7 @@ fun KArchiverRoot() {
                 vm = vm,
                 showMainMenu = settings?.showMainMenu == true,
                 confirmDelete = settings?.confirmDelete != false,
+                rarEnabled = settings?.rarEnabled == true,
                 barLifted = barLifted,
                 onToggleBar = { barLifted = !barLifted },
                 onOpenHome = { navController.navigate(RootRoute.HOME) },

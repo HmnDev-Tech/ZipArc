@@ -282,7 +282,7 @@ fun SettingsScreen(
             Column(verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap)) {
                 SegmentedListItem(
                     onClick = {},
-                    shapes = ListItemDefaults.segmentedShapes(index = 0, count = 4),
+                    shapes = ListItemDefaults.segmentedShapes(index = 0, count = 5),
                     colors = ListItemDefaults.segmentedColors(
                         containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
                     ),
@@ -319,7 +319,7 @@ fun SettingsScreen(
                 }
                 SettingSwitch(
                     index = 1,
-                    count = 4,
+                    count = 5,
                     title = "Folders first",
                     subtitle = "Always list folders above files, no matter the sort order.",
                     checked = settings.foldersFirst,
@@ -327,7 +327,7 @@ fun SettingsScreen(
                 )
                 SettingSwitch(
                     index = 2,
-                    count = 4,
+                    count = 5,
                     title = "Confirm before delete",
                     subtitle = "Ask for confirmation before deleting files and folders.",
                     checked = settings.confirmDelete,
@@ -335,7 +335,7 @@ fun SettingsScreen(
                 )
                 SegmentedListItem(
                     onClick = {},
-                    shapes = ListItemDefaults.segmentedShapes(index = 3, count = 4),
+                    shapes = ListItemDefaults.segmentedShapes(index = 3, count = 5),
                     colors = ListItemDefaults.segmentedColors(
                         containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
                     ),
@@ -383,6 +383,14 @@ fun SettingsScreen(
                 ) {
                     Text("Default view")
                 }
+                SettingSwitch(
+                    index = 4,
+                    count = 5,
+                    title = "RAR support",
+                    subtitle = "Read RAR archives: preview, verify and extract. RAR stays read-only, packing is never enabled.",
+                    checked = settings.rarEnabled,
+                    onCheckedChange = { scope.launch { repo.setRarEnabled(it) } }
+                )
             }
             SectionHeader("Interface")
             Column(verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap)) {

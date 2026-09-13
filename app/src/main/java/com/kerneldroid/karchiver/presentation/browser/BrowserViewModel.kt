@@ -13,6 +13,9 @@ import com.kerneldroid.karchiver.data.FileItem
 import com.kerneldroid.karchiver.data.FileSystemRepository
 import com.kerneldroid.karchiver.data.CompressFormat
 import com.kerneldroid.karchiver.data.FormatRegistry
+import com.kerneldroid.karchiver.data.RAR_DISABLED_MESSAGE
+import com.kerneldroid.karchiver.data.RarDisabledException
+import com.kerneldroid.karchiver.data.isRarArchive
 import com.kerneldroid.karchiver.data.normalizeArchiveName
 import com.kerneldroid.karchiver.data.PreviewListing
 import com.kerneldroid.karchiver.data.RustBridge
@@ -51,6 +54,7 @@ data class BrowserUiState(
     val query: String = "",
     val hideHidden: Boolean = false,
     val foldersFirst: Boolean = true,
+    val rarEnabled: Boolean = false,
     val isLoading: Boolean = false,
     val isSelectionMode: Boolean = false
 )
@@ -79,6 +83,10 @@ class BrowserViewModel(
     private var previewToken = 0
 
     fun openPreview(file: File, password: String = "") {
+        if (isRarArchive(file) && !_state.value.rarEnabled) {
+            _preview.value = ArchivePreviewUiState(file = file, error = RAR_DISABLED_MESSAGE)
+            return
+        }
         val token = ++previewToken
         _preview.value = ArchivePreviewUiState(file = file, isLoading = true, passwordUsed = password)
         viewModelScope.launch {
@@ -101,6 +109,10 @@ class BrowserViewModel(
     }
 
     fun verifyArchive(file: File, password: String = "") {
+        if (isRarArchive(file) && !_state.value.rarEnabled) {
+            _verify.value = VerifyUiState(file = file, error = RAR_DISABLED_MESSAGE)
+            return
+        }
         _verify.value = VerifyUiState(file = file, isLoading = true, passwordUsed = password)
         viewModelScope.launch {
             _archiveOpActive.value = true
@@ -125,6 +137,7 @@ class BrowserViewModel(
     }
 
     private fun verifyMessage(e: Throwable): String {
+        if (e is RarDisabledException) return RAR_DISABLED_MESSAGE
         val msg = e.message ?: ""
         return when {
             msg.contains("wrong password", ignoreCase = true) -> "Wrong password"
@@ -135,6 +148,7 @@ class BrowserViewModel(
     }
 
     private fun previewMessage(e: Throwable): String {
+        if (e is RarDisabledException) return RAR_DISABLED_MESSAGE
         val msg = e.message ?: ""
         return when {
             msg.contains("wrong password", ignoreCase = true) -> "Wrong password"
@@ -146,6 +160,7 @@ class BrowserViewModel(
     }
 
     fun archiveOpMessage(e: Throwable?, successText: String, failureText: String): String {
+        if (e is RarDisabledException) return RAR_DISABLED_MESSAGE
         val msg = e?.message ?: ""
         return when {
             e == null -> successText
@@ -173,7 +188,8 @@ class BrowserViewModel(
         hideHidden: Boolean,
         sortBy: SortBy = SortBy.NAME,
         viewMode: ViewMode = ViewMode.LIST,
-        foldersFirst: Boolean = true
+        foldersFirst: Boolean = true,
+        rarEnabled: Boolean = false
     ) {
         if (initialized) return
         initialized = true
@@ -183,9 +199,15 @@ class BrowserViewModel(
             hideHidden = hideHidden,
             sortBy = sortBy,
             viewMode = viewMode,
-            foldersFirst = foldersFirst
+            foldersFirst = foldersFirst,
+            rarEnabled = rarEnabled
         )
         refresh()
+    }
+
+    fun setRarEnabled(value: Boolean) {
+        if (_state.value.rarEnabled == value) return
+        _state.value = _state.value.copy(rarEnabled = value)
     }
 
     fun applyExplorerPrefs(sortBy: SortBy, viewMode: ViewMode, foldersFirst: Boolean) {
@@ -352,6 +374,10 @@ class BrowserViewModel(
     }
 
     fun extractArchive(file: File, password: String = "", onDone: (Result<Unit>) -> Unit = {}) {
+        if (isRarArchive(file) && !_state.value.rarEnabled) {
+            onDone(Result.failure(RarDisabledException()))
+            return
+        }
         if (!FormatRegistry.isArchive(file.extension)) {
             onDone(Result.failure(IllegalArgumentException("Not archive"))); return
         }

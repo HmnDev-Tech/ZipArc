@@ -1,5 +1,6 @@
 //! Backend dispatch plus the shared source-tree walker.
 
+pub mod rar;
 pub mod sevenz;
 pub mod single;
 pub mod tar;
@@ -192,9 +193,7 @@ pub fn extract(archive: &Path, dest: &Path, format: Format, limits: &Limits) -> 
         Format::SevenZ => sevenz::extract(archive, dest, limits),
         f if f.is_tar() => tar::extract(archive, dest, f, limits),
         f if f.is_single_stream() => single::extract(archive, dest, f, limits),
-        Format::Rar => Err(ArchiveError::Unsupported(
-            "RAR extraction is not supported by this engine".to_string(),
-        )),
+        Format::Rar => rar::extract(archive, dest, limits),
         other => Err(ArchiveError::Unsupported(format!(
             "extraction of {} is not supported",
             other.label()
@@ -208,9 +207,7 @@ pub fn list(archive: &Path, format: Format) -> Result<Vec<String>> {
         Format::SevenZ => sevenz::list(archive),
         f if f.is_tar() => tar::list(archive, f),
         f if f.is_single_stream() => single::list(archive, f),
-        Format::Rar => Err(ArchiveError::Unsupported(
-            "RAR listing is not supported by this engine".to_string(),
-        )),
+        Format::Rar => rar::list(archive),
         other => Err(ArchiveError::Unsupported(format!(
             "listing of {} is not supported",
             other.label()
@@ -224,9 +221,7 @@ pub fn list_detailed(archive: &Path, format: Format) -> Result<PreviewListing> {
         Format::SevenZ => sevenz::list_detailed(archive),
         f if f.is_tar() => tar::list_detailed(archive, f),
         f if f.is_single_stream() => single::list_detailed(archive, f),
-        Format::Rar => Err(ArchiveError::Unsupported(
-            "RAR listing is not supported by this engine".to_string(),
-        )),
+        Format::Rar => rar::list_detailed(archive),
         other => Err(ArchiveError::Unsupported(format!(
             "listing of {} is not supported",
             other.label()
@@ -240,9 +235,7 @@ pub fn test_archive(archive: &Path, format: Format, limits: &Limits) -> Result<T
         Format::SevenZ => sevenz::test(archive, limits),
         f if f.is_tar() => tar::test(archive, f, limits),
         f if f.is_single_stream() => single::test(archive, f, limits),
-        Format::Rar => Err(ArchiveError::Unsupported(
-            "RAR verification is not supported by this engine".to_string(),
-        )),
+        Format::Rar => rar::test(archive, limits),
         other => Err(ArchiveError::Unsupported(format!(
             "verification of {} is not supported",
             other.label()
@@ -287,6 +280,7 @@ pub fn extract_with_password(
     match format {
         Format::Zip => zip::extract_with_password(archive, dest, limits, password.as_bytes()),
         Format::SevenZ => sevenz::extract_with_password(archive, dest, limits, password),
+        Format::Rar => rar::extract_with_password(archive, dest, limits, password),
         other => reject_password(other, "extraction"),
     }
 }
@@ -302,6 +296,7 @@ pub fn list_detailed_with_password(
     match format {
         Format::Zip => zip::list_detailed_with_password(archive, password.as_bytes()),
         Format::SevenZ => sevenz::list_detailed_with_password(archive, password),
+        Format::Rar => rar::list_detailed_with_password(archive, password),
         other => reject_password(other, "listing"),
     }
 }
@@ -318,6 +313,7 @@ pub fn test_archive_with_password(
     match format {
         Format::Zip => zip::test_with_password(archive, limits, password.as_bytes()),
         Format::SevenZ => sevenz::test_with_password(archive, limits, password),
+        Format::Rar => rar::test_with_password(archive, limits, password),
         other => reject_password(other, "verification"),
     }
 }

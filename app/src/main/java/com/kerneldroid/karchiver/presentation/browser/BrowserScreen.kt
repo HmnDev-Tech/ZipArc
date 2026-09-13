@@ -62,6 +62,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.kerneldroid.karchiver.data.CompressFormat
 import com.kerneldroid.karchiver.data.FileItem
 import com.kerneldroid.karchiver.data.FormatRegistry
+import com.kerneldroid.karchiver.data.RAR_DISABLED_MESSAGE
+import com.kerneldroid.karchiver.data.isRarArchive
 import com.kerneldroid.karchiver.data.SortBy
 import com.kerneldroid.karchiver.data.normalizeArchiveName
 import com.kerneldroid.karchiver.presentation.components.RoundedTopScaffold
@@ -81,6 +83,7 @@ fun BrowserScreen(
     vm: BrowserViewModel,
     showMainMenu: Boolean,
     confirmDelete: Boolean = true,
+    rarEnabled: Boolean = false,
     barLifted: Boolean,
     onToggleBar: () -> Unit,
     onOpenHome: () -> Unit,
@@ -115,12 +118,22 @@ fun BrowserScreen(
     val selectedItems = state.items.filter { state.selected.contains(it.file.absolutePath) }
     val singleArchive = selectedItems.singleOrNull()?.takeIf { FormatRegistry.isArchive(it.extension) }
 
+    fun notifyRarDisabled() {
+        scope.launch {
+            val res = snackbar.showSnackbar(RAR_DISABLED_MESSAGE, actionLabel = "Settings")
+            if (res == SnackbarResult.ActionPerformed) onOpenSettings()
+        }
+    }
+
     val handleItemClick: (FileItem) -> Unit = { item ->
         haptics.performHapticFeedback(HapticFeedbackType.VirtualKey)
         when {
             state.isSelectionMode -> vm.toggleSelect(item.file.absolutePath)
             item.isDirectory -> vm.navigateTo(item.file)
-            FormatRegistry.isArchive(item.extension) -> pendingExtract = item.file
+            FormatRegistry.isArchive(item.extension) -> {
+                if (isRarArchive(item.file) && !rarEnabled) notifyRarDisabled()
+                else pendingExtract = item.file
+            }
             else -> vm.openFile(context, item.file)
         }
     }
@@ -278,7 +291,11 @@ fun BrowserScreen(
                         }
                     },
                     onCompress = { showCompressDialog = true },
-                    onExtract = { pendingExtract = singleArchive?.file }
+                    onExtract = {
+                        val target = singleArchive?.file
+                        if (target != null && isRarArchive(target) && !rarEnabled) notifyRarDisabled()
+                        else pendingExtract = target
+                    }
                 )
                 ClipboardFloatingBar(
                     modifier = Modifier

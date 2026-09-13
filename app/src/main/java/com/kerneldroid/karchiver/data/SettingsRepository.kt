@@ -24,7 +24,8 @@ data class AppSettings(
     val defaultSort: SortBy = SortBy.NAME,
     val defaultView: String = "list",
     val foldersFirst: Boolean = true,
-    val confirmDelete: Boolean = true
+    val confirmDelete: Boolean = true,
+    val rarEnabled: Boolean = false
 )
 
 class SettingsRepository(private val appContext: Context) {
@@ -46,6 +47,7 @@ class SettingsRepository(private val appContext: Context) {
         val DEFAULT_VIEW = stringPreferencesKey("default_view")
         val FOLDERS_FIRST = booleanPreferencesKey("folders_first")
         val CONFIRM_DELETE = booleanPreferencesKey("confirm_delete")
+        val RAR_ENABLED = booleanPreferencesKey("rar_enabled")
     }
 
     val recentFolders: Flow<List<String>> = appContext.dataStore.data.map { p ->
@@ -81,7 +83,8 @@ class SettingsRepository(private val appContext: Context) {
                 ?: SortBy.NAME,
             defaultView = p[Keys.DEFAULT_VIEW] ?: "list",
             foldersFirst = p[Keys.FOLDERS_FIRST] ?: true,
-            confirmDelete = p[Keys.CONFIRM_DELETE] ?: true
+            confirmDelete = p[Keys.CONFIRM_DELETE] ?: true,
+            rarEnabled = p[Keys.RAR_ENABLED] ?: false
         )
     }
 
@@ -122,4 +125,7 @@ class SettingsRepository(private val appContext: Context) {
 
     suspend fun setConfirmDelete(value: Boolean) =
         appContext.dataStore.edit { it[Keys.CONFIRM_DELETE] = value }
+
+    suspend fun setRarEnabled(value: Boolean) =
+        appContext.dataStore.edit { it[Keys.RAR_ENABLED] = value }
 }

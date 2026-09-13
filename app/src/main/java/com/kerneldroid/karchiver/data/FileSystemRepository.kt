@@ -19,6 +19,12 @@ data class FileItem(
 
 enum class SortBy { NAME, DATE, SIZE, TYPE }
 
+const val RAR_DISABLED_MESSAGE = "RAR support is disabled. Enable it in Settings."
+
+class RarDisabledException : Exception(RAR_DISABLED_MESSAGE)
+
+fun isRarArchive(file: File): Boolean = file.extension.lowercase() in setOf("rar", "cbr")
+
 enum class CompressFormat(val extension: String, val label: String, val supportsPassword: Boolean) {
     ZIP("zip", "ZIP", true),
     SEVEN_Z("7z", "7Z", true),
