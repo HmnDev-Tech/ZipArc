@@ -43,7 +43,9 @@ fun KArchiverRoot() {
     val browserState by vm.state.collectAsStateWithLifecycle()
     val navController = rememberNavController()
     val motionScheme = MaterialTheme.motionScheme
+    val recents by settingsRepo.recentFolders.collectAsStateWithLifecycle(initialValue = emptyList())
     var ready by remember { mutableStateOf(false) }
+    var historyPrimed by remember { mutableStateOf(false) }
 
     LaunchedEffect(settings) {
         val s = settings ?: return@LaunchedEffect
@@ -53,7 +55,12 @@ fun KArchiverRoot() {
     }
 
     LaunchedEffect(browserState.currentDir.absolutePath, ready) {
-        if (ready) settingsRepo.setLastPath(browserState.currentDir.absolutePath)
+        if (ready) {
+            val path = browserState.currentDir.absolutePath
+            settingsRepo.setLastPath(path)
+            if (historyPrimed) settingsRepo.pushRecentFolder(path)
+            historyPrimed = true
+        }
     }
 
     NavHost(
@@ -99,7 +106,8 @@ fun KArchiverRoot() {
                     navController.popBackStack(RootRoute.BROWSER, inclusive = false)
                 },
                 onOpenSettings = { navController.navigate(RootRoute.SETTINGS) },
-                onBack = { navController.popBackStack() }
+                onBack = { navController.popBackStack() },
+                recentFolders = recents
             )
         }
         composable(RootRoute.SETTINGS) {

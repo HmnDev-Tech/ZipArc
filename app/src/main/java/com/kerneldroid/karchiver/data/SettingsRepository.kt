@@ -19,11 +19,35 @@ data class AppSettings(
 
 class SettingsRepository(private val appContext: Context) {
 
+    companion object {
+        const val MAX_RECENT_FOLDERS = 5
+    }
+
     private object Keys {
         val SHOW_MAIN_MENU = booleanPreferencesKey("show_main_menu")
         val OPEN_LAST_FOLDER = booleanPreferencesKey("open_last_folder")
         val HIDE_HIDDEN = booleanPreferencesKey("hide_hidden")
         val LAST_PATH = stringPreferencesKey("last_path")
+        val RECENT_FOLDERS = stringPreferencesKey("recent_folders")
+    }
+
+    val recentFolders: Flow<List<String>> = appContext.dataStore.data.map { p ->
+        p[Keys.RECENT_FOLDERS]
+            ?.split("\n")
+            ?.map { it.trim() }
+            ?.filter { it.isNotEmpty() }
+            ?: emptyList()
+    }
+
+    suspend fun pushRecentFolder(path: String) = appContext.dataStore.edit { p ->
+        val updated = (listOf(path) + (p[Keys.RECENT_FOLDERS]
+            ?.split("\n")
+            ?.map { it.trim() }
+            ?.filter { it.isNotEmpty() }
+            ?: emptyList()))
+            .distinct()
+            .take(MAX_RECENT_FOLDERS)
+        p[Keys.RECENT_FOLDERS] = updated.joinToString("\n")
     }
 
     val settings: Flow<AppSettings> = appContext.dataStore.data.map { p ->
