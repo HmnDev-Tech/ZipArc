@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use jni::JNIEnv;
 use jni::objects::{JClass, JObject, JObjectArray, JString};
 use jni::sys::jint;
+use serde::Serialize;
 
 use crate::backend;
 use crate::error::{ArchiveError, Result};
@@ -156,42 +157,56 @@ pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_listArchiv
     }
 }
 
-fn escape_json_string(out: &mut String, value: &str) {
-    for c in value.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => {
-                out.push_str(&format!("\\u{:04x}", c as u32));
-            }
-            c => out.push(c),
-        }
-    }
+/// Wire-compatible DTOs for the JSON strings consumed by Kotlin.
+/// Field names (including `isDir`, `totalSize`, `passwordRequired`) are part
+/// of the Kotlin ABI and must not change.
+#[derive(Serialize)]
+struct PreviewEntryDto<'a> {
+    name: &'a str,
+    size: u64,
+    #[serde(rename = "isDir")]
+    is_dir: bool,
+    encrypted: bool,
 }
 
-fn preview_to_json(listing: &crate::backend::PreviewListing) -> String {
-    let mut out = String::from("{\"encrypted\":");
-    out.push_str(if listing.encrypted { "true" } else { "false" });
-    out.push_str(",\"entries\":[");
-    for (i, e) in listing.entries.iter().enumerate() {
-        if i > 0 {
-            out.push(',');
-        }
-        out.push_str("{\"name\":\"");
-        escape_json_string(&mut out, &e.name);
-        out.push_str("\",\"size\":");
-        out.push_str(&e.size.to_string());
-        out.push_str(",\"isDir\":");
-        out.push_str(if e.is_dir { "true" } else { "false" });
-        out.push_str(",\"encrypted\":");
-        out.push_str(if e.encrypted { "true" } else { "false" });
-        out.push('}');
-    }
-    out.push_str("]}");
-    out
+#[derive(Serialize)]
+struct PreviewDto<'a> {
+    encrypted: bool,
+    entries: Vec<PreviewEntryDto<'a>>,
+}
+
+#[derive(Serialize)]
+struct TestFailureDto<'a> {
+    name: &'a str,
+    reason: &'a str,
+}
+
+#[derive(Serialize)]
+struct TestReportDto<'a> {
+    ok: bool,
+    entries: usize,
+    #[serde(rename = "totalSize")]
+    total_size: u64,
+    failures: Vec<TestFailureDto<'a>>,
+    #[serde(rename = "passwordRequired")]
+    password_required: bool,
+}
+
+fn preview_to_json(listing: &crate::backend::PreviewListing) -> Result<String> {
+    let dto = PreviewDto {
+        encrypted: listing.encrypted,
+        entries: listing
+            .entries
+            .iter()
+            .map(|e| PreviewEntryDto {
+                name: &e.name,
+                size: e.size,
+                is_dir: e.is_dir,
+                encrypted: e.encrypted,
+            })
+            .collect(),
+    };
+    serde_json::to_string(&dto).map_err(ArchiveError::backend)
 }
 
 #[unsafe(no_mangle)]
@@ -207,7 +222,7 @@ pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_listArchiv
         let archive = PathBuf::from(read_string(&mut env, &archive_str)?);
         let format = format::detect(&archive)?;
         let listing = backend::list_detailed(&archive, format)?;
-        Ok(preview_to_json(&listing))
+        preview_to_json(&listing)
     }));
     match outcome {
         Ok(Ok(json)) => match env.new_string(json) {
@@ -295,7 +310,7 @@ pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_listArchiv
         let password = read_string(&mut env, &password_str)?;
         let format = format::detect(&archive)?;
         let result = backend::list_detailed_with_password(&archive, format, &password)
-            .map(|listing| preview_to_json(&listing));
+            .and_then(|listing| preview_to_json(&listing));
         wipe_password(password);
         result
     }));
@@ -347,8 +362,8 @@ pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_testArchiv
             &Limits::default(),
             &password,
         ) {
-            Ok(report) => Ok(test_report_to_json(&report)),
-            Err(ArchiveError::PasswordRequired(_)) => Ok("{\"ok\":false,\"entries\":0,\"totalSize\":0,\"failures\":[],\"passwordRequired\":true}".to_string()),
+            Ok(report) => test_report_to_json(&report),
+            Err(ArchiveError::PasswordRequired(_)) => password_required_json(),
             Err(e) => Err(e),
         };
         wipe_password(password);
@@ -373,36 +388,33 @@ pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_testArchiv
     }
 }
 
-fn test_report_to_json(report: &crate::backend::TestReport) -> String {
-    let mut out = String::from("{\"ok\":");
-    out.push_str(if report.failures.is_empty() && !report.password_required {
-        "true"
-    } else {
-        "false"
-    });
-    out.push_str(",\"entries\":");
-    out.push_str(&report.entries.to_string());
-    out.push_str(",\"totalSize\":");
-    out.push_str(&report.total_size.to_string());
-    out.push_str(",\"failures\":[");
-    for (i, f) in report.failures.iter().enumerate() {
-        if i > 0 {
-            out.push(',');
-        }
-        out.push_str("{\"name\":\"");
-        escape_json_string(&mut out, &f.name);
-        out.push_str("\",\"reason\":\"");
-        escape_json_string(&mut out, &f.reason);
-        out.push_str("\"}");
-    }
-    out.push_str("],\"passwordRequired\":");
-    out.push_str(if report.password_required {
-        "true"
-    } else {
-        "false"
-    });
-    out.push('}');
-    out
+fn test_report_to_json(report: &crate::backend::TestReport) -> Result<String> {
+    let dto = TestReportDto {
+        ok: report.ok(),
+        entries: report.entries,
+        total_size: report.total_size,
+        failures: report
+            .failures
+            .iter()
+            .map(|f| TestFailureDto {
+                name: &f.name,
+                reason: &f.reason,
+            })
+            .collect(),
+        password_required: report.password_required,
+    };
+    serde_json::to_string(&dto).map_err(ArchiveError::backend)
+}
+
+fn password_required_json() -> Result<String> {
+    let dto = TestReportDto {
+        ok: false,
+        entries: 0,
+        total_size: 0,
+        failures: Vec::new(),
+        password_required: true,
+    };
+    serde_json::to_string(&dto).map_err(ArchiveError::backend)
 }
 
 #[unsafe(no_mangle)]
@@ -416,8 +428,8 @@ pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_testArchiv
         let archive = PathBuf::from(read_string(&mut env, &archive_str)?);
         let format = format::detect(&archive)?;
         match backend::test_archive(&archive, format, &Limits::default()) {
-            Ok(report) => Ok(test_report_to_json(&report)),
-            Err(ArchiveError::PasswordRequired(_)) => Ok("{\"ok\":false,\"entries\":0,\"totalSize\":0,\"failures\":[],\"passwordRequired\":true}".to_string()),
+            Ok(report) => test_report_to_json(&report),
+            Err(ArchiveError::PasswordRequired(_)) => password_required_json(),
             Err(e) => Err(e),
         }
     }));
