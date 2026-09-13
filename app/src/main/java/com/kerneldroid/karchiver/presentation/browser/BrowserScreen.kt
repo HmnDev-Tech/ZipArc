@@ -12,6 +12,8 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -20,10 +22,14 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -89,6 +95,14 @@ fun BrowserScreen(
     var pendingExtract by remember { mutableStateOf<File?>(null) }
     var createKind by remember { mutableStateOf<CreateKind?>(null) }
     val pullRefreshState = rememberPullToRefreshState()
+    val listState = rememberLazyListState()
+    val gridState = rememberLazyGridState()
+    val showScrollTop by remember {
+        derivedStateOf {
+            if (state.viewMode == ViewMode.LIST) listState.firstVisibleItemIndex > 3
+            else gridState.firstVisibleItemIndex > 5
+        }
+    }
 
     val selectedItems = state.items.filter { state.selected.contains(it.file.absolutePath) }
     val singleArchive = selectedItems.singleOrNull()?.takeIf { FormatRegistry.isArchive(it.extension) }
@@ -126,10 +140,24 @@ fun BrowserScreen(
         snackbarHost = { SnackbarHost(snackbar) },
         floatingActionButton = {
             if (!searchActive && !state.isSelectionMode && vm.clipboard == null) {
-                CreateFabMenu(
-                    onCreateFolder = { createKind = CreateKind.FOLDER },
-                    onCreateFile = { createKind = CreateKind.FILE }
-                )
+                Column(
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    ScrollTopButton(
+                        visible = showScrollTop,
+                        onClick = {
+                            scope.launch {
+                                if (state.viewMode == ViewMode.LIST) listState.animateScrollToItem(0)
+                                else gridState.animateScrollToItem(0)
+                            }
+                        }
+                    )
+                    CreateFabMenu(
+                        onCreateFolder = { createKind = CreateKind.FOLDER },
+                        onCreateFile = { createKind = CreateKind.FILE }
+                    )
+                }
             }
         },
         topBar = {
@@ -184,11 +212,13 @@ fun BrowserScreen(
                             state.items.isEmpty() -> EmptyState(query = state.query)
                             state.viewMode == ViewMode.LIST -> FileList(
                                 state = state,
+                                listState = listState,
                                 onItemClick = handleItemClick,
                                 onItemLongClick = handleItemLongClick
                             )
                             else -> FileGrid(
                                 state = state,
+                                gridState = gridState,
                                 onItemClick = handleItemClick,
                                 onItemLongClick = handleItemLongClick
                             )
@@ -528,6 +558,21 @@ fun BrowserScreen(
 }
 
 @Composable
+private fun ScrollTopButton(visible: Boolean, onClick: () -> Unit) {
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(animationSpec = MaterialTheme.motionScheme.fastEffectsSpec()) +
+            scaleIn(animationSpec = MaterialTheme.motionScheme.fastSpatialSpec()),
+        exit = fadeOut(animationSpec = MaterialTheme.motionScheme.fastEffectsSpec()) +
+            scaleOut(animationSpec = MaterialTheme.motionScheme.fastSpatialSpec())
+    ) {
+        SmallFloatingActionButton(onClick = onClick) {
+            Icon(Icons.Filled.KeyboardArrowUp, "Scroll to top")
+        }
+    }
+}
+
+@Composable
 private fun CreateFabMenu(onCreateFolder: () -> Unit, onCreateFile: () -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     FloatingActionButtonMenu(
@@ -687,10 +732,12 @@ private fun Breadcrumbs(current: File, onNavigate: (File) -> Unit) {
 @Composable
 private fun FileList(
     state: BrowserUiState,
+    listState: LazyListState,
     onItemClick: (FileItem) -> Unit,
     onItemLongClick: (FileItem) -> Unit
 ) {
     LazyColumn(
+        state = listState,
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 12.dp, top = 8.dp, end = 12.dp, bottom = 96.dp),
         verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap)
@@ -714,11 +761,13 @@ private fun FileList(
 @Composable
 private fun FileGrid(
     state: BrowserUiState,
+    gridState: LazyGridState,
     onItemClick: (FileItem) -> Unit,
     onItemLongClick: (FileItem) -> Unit
 ) {
     LazyVerticalGrid(
         columns = GridCells.Adaptive(minSize = 104.dp),
+        state = gridState,
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 12.dp, top = 12.dp, end = 12.dp, bottom = 96.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
