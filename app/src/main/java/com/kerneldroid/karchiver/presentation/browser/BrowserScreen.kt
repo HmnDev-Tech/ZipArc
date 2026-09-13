@@ -226,9 +226,9 @@ fun BrowserScreen(
                 )
                 ClipboardFloatingBar(
                     modifier = Modifier
-                        .align(Alignment.BottomEnd)
+                        .align(Alignment.BottomStart)
                         .navigationBarsPadding()
-                        .padding(end = 16.dp, bottom = 16.dp),
+                        .padding(start = 16.dp, bottom = 16.dp),
                     visible = !state.isSelectionMode && vm.clipboard != null,
                     count = vm.clipboard?.first?.size ?: 0,
                     onPaste = {
