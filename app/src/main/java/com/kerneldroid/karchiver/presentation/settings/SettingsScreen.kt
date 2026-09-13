@@ -13,18 +13,20 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedListItem
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.kerneldroid.karchiver.data.AppSettings
 import com.kerneldroid.karchiver.data.SettingsRepository
+import com.kerneldroid.karchiver.presentation.components.RoundedTopScaffold
 import kotlinx.coroutines.launch
 
 @Composable
@@ -32,9 +34,13 @@ fun SettingsScreen(settings: AppSettings, repo: SettingsRepository, onBack: () -
     BackHandler { onBack() }
     val scope = rememberCoroutineScope()
 
-    Scaffold(
+    RoundedTopScaffold(
         topBar = {
             TopAppBar(
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = Color.Transparent,
+                    scrolledContainerColor = Color.Transparent
+                ),
                 title = { Text("Settings") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {

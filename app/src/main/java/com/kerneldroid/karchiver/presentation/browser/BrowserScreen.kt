@@ -64,6 +64,7 @@ import com.kerneldroid.karchiver.data.FileItem
 import com.kerneldroid.karchiver.data.FormatRegistry
 import com.kerneldroid.karchiver.data.SortBy
 import com.kerneldroid.karchiver.data.normalizeArchiveName
+import com.kerneldroid.karchiver.presentation.components.RoundedTopScaffold
 import kotlinx.coroutines.launch
 import java.io.File
 import java.text.SimpleDateFormat
@@ -138,7 +139,7 @@ fun BrowserScreen(
         }
     }
 
-    Scaffold(
+    RoundedTopScaffold(
         snackbarHost = { SnackbarHost(snackbar) },
         floatingActionButton = {
             if (!searchActive && !state.isSelectionMode && vm.clipboard == null) {
@@ -626,6 +627,10 @@ private fun BrowserTopBar(
     onOpenSort: () -> Unit
 ) {
     TopAppBar(
+        colors = TopAppBarDefaults.topAppBarColors(
+            containerColor = Color.Transparent,
+            scrolledContainerColor = Color.Transparent
+        ),
         title = {
             Column {
                 Text(
@@ -665,6 +670,10 @@ private fun SearchTopBar(query: String, onQueryChange: (String) -> Unit, onClose
     val focusRequester = remember { FocusRequester() }
     LaunchedEffect(Unit) { focusRequester.requestFocus() }
     TopAppBar(
+        colors = TopAppBarDefaults.topAppBarColors(
+            containerColor = Color.Transparent,
+            scrolledContainerColor = Color.Transparent
+        ),
         navigationIcon = {
             IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
         },
@@ -696,6 +705,10 @@ private fun SearchTopBar(query: String, onQueryChange: (String) -> Unit, onClose
 @Composable
 private fun SelectionTopBar(count: Int, onClose: () -> Unit, onSelectAll: () -> Unit) {
     TopAppBar(
+        colors = TopAppBarDefaults.topAppBarColors(
+            containerColor = Color.Transparent,
+            scrolledContainerColor = Color.Transparent
+        ),
         navigationIcon = {
             IconButton(onClick = onClose) { Icon(Icons.Filled.Close, "Cancel") }
         },
