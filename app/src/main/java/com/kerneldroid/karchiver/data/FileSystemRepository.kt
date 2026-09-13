@@ -90,14 +90,21 @@ data class TestReport(
 
 class FileSystemRepository {
 
-    suspend fun listDir(path: File, sortBy: SortBy = SortBy.NAME, ascending: Boolean = true): List<FileItem> = withContext(Dispatchers.IO) {
+    suspend fun listDir(
+        path: File,
+        sortBy: SortBy = SortBy.NAME,
+        ascending: Boolean = true,
+        foldersFirst: Boolean = true
+    ): List<FileItem> = withContext(Dispatchers.IO) {
         val raw = path.listFiles()?.map { FileItem(it) } ?: emptyList()
-        val sorted = when (sortBy) {
-            SortBy.NAME -> raw.sortedWith(compareBy<FileItem> { !it.isDirectory }.thenBy { it.name.lowercase() })
-            SortBy.DATE -> raw.sortedBy { it.lastModified }
-            SortBy.SIZE -> raw.sortedBy { it.size }
-            SortBy.TYPE -> raw.sortedWith(compareBy<FileItem> { !it.isDirectory }.thenBy { it.extension })
+        val key: Comparator<FileItem> = when (sortBy) {
+            SortBy.NAME -> compareBy { it.name.lowercase() }
+            SortBy.DATE -> compareBy { it.lastModified }
+            SortBy.SIZE -> compareBy { it.size }
+            SortBy.TYPE -> compareBy { it.extension }
         }
+        val comparator = if (foldersFirst) compareBy<FileItem> { !it.isDirectory }.then(key) else key
+        val sorted = raw.sortedWith(comparator)
         if (ascending) sorted else sorted.reversed()
     }
 

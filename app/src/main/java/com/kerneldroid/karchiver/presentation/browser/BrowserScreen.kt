@@ -80,6 +80,7 @@ private const val SCROLL_TOP_JUMP_THRESHOLD = 12
 fun BrowserScreen(
     vm: BrowserViewModel,
     showMainMenu: Boolean,
+    confirmDelete: Boolean = true,
     barLifted: Boolean,
     onToggleBar: () -> Unit,
     onOpenHome: () -> Unit,
@@ -98,6 +99,7 @@ fun BrowserScreen(
     var searchActive by rememberSaveable { mutableStateOf(false) }
     var showSortSheet by rememberSaveable { mutableStateOf(false) }
     var showCompressDialog by remember { mutableStateOf(false) }
+    var showDeleteConfirm by remember { mutableStateOf(false) }
     var pendingExtract by remember { mutableStateOf<File?>(null) }
     var createKind by remember { mutableStateOf<CreateKind?>(null) }
     val pullRefreshState = rememberPullToRefreshState()
@@ -270,7 +272,8 @@ fun BrowserScreen(
                     },
                     onDelete = {
                         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                        vm.deleteSelection { r ->
+                        if (confirmDelete) showDeleteConfirm = true
+                        else vm.deleteSelection { r ->
                             scope.launch { snackbar.showSnackbar(if (r.isSuccess) "Deleted" else "Delete failed") }
                         }
                     },
@@ -297,6 +300,26 @@ fun BrowserScreen(
 
     if (showSortSheet) {
         SortSheet(state = state, vm = vm, onDismiss = { showSortSheet = false })
+    }
+
+    if (showDeleteConfirm) {
+        val count = state.selected.size
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text(if (count == 1) "Delete 1 item?" else "Delete $count items?") },
+            text = { Text("This cannot be undone.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showDeleteConfirm = false
+                    vm.deleteSelection { r ->
+                        scope.launch { snackbar.showSnackbar(if (r.isSuccess) "Deleted" else "Delete failed") }
+                    }
+                }) { Text("Delete") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = false }) { Text("Cancel") }
+            }
+        )
     }
 
     if (showCompressDialog) {

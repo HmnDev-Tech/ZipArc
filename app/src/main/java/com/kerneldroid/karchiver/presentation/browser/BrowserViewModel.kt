@@ -50,6 +50,7 @@ data class BrowserUiState(
     val viewMode: ViewMode = ViewMode.LIST,
     val query: String = "",
     val hideHidden: Boolean = false,
+    val foldersFirst: Boolean = true,
     val isLoading: Boolean = false,
     val isSelectionMode: Boolean = false
 )
@@ -167,11 +168,30 @@ class BrowserViewModel(
 
     private var initialized = false
     private var loadToken = 0
-    fun initialize(initialPath: String?, hideHidden: Boolean) {
+    fun initialize(
+        initialPath: String?,
+        hideHidden: Boolean,
+        sortBy: SortBy = SortBy.NAME,
+        viewMode: ViewMode = ViewMode.LIST,
+        foldersFirst: Boolean = true
+    ) {
         if (initialized) return
         initialized = true
         val dir = initialPath?.let { File(it) }?.takeIf { it.isDirectory } ?: rootDir
-        _state.value = _state.value.copy(currentDir = dir, hideHidden = hideHidden)
+        _state.value = _state.value.copy(
+            currentDir = dir,
+            hideHidden = hideHidden,
+            sortBy = sortBy,
+            viewMode = viewMode,
+            foldersFirst = foldersFirst
+        )
+        refresh()
+    }
+
+    fun applyExplorerPrefs(sortBy: SortBy, viewMode: ViewMode, foldersFirst: Boolean) {
+        val s = _state.value
+        if (s.sortBy == sortBy && s.viewMode == viewMode && s.foldersFirst == foldersFirst) return
+        _state.value = s.copy(sortBy = sortBy, viewMode = viewMode, foldersFirst = foldersFirst)
         refresh()
     }
 
@@ -187,7 +207,7 @@ class BrowserViewModel(
         _state.value = s.copy(isLoading = true)
         _refreshing.value = true
         viewModelScope.launch {
-            val items = repo.listDir(s.currentDir, s.sortBy, s.ascending)
+            val items = repo.listDir(s.currentDir, s.sortBy, s.ascending, s.foldersFirst)
                 .asSequence()
                 .filter { !s.hideHidden || !it.name.startsWith(".") }
                 .filter { s.query.isBlank() || it.name.contains(s.query, ignoreCase = true) }

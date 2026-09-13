@@ -23,6 +23,7 @@ import com.kerneldroid.karchiver.data.AppSettings
 import com.kerneldroid.karchiver.data.SettingsRepository
 import com.kerneldroid.karchiver.presentation.browser.BrowserScreen
 import com.kerneldroid.karchiver.presentation.browser.BrowserViewModel
+import com.kerneldroid.karchiver.presentation.browser.ViewMode
 import com.kerneldroid.karchiver.presentation.home.HomeScreen
 import com.kerneldroid.karchiver.presentation.settings.SettingsScreen
 import java.io.File
@@ -51,9 +52,30 @@ fun KArchiverRoot() {
 
     LaunchedEffect(settings) {
         val s = settings ?: return@LaunchedEffect
-        vm.initialize(s.lastPath.takeIf { s.openLastFolder }, s.hideHidden)
+        vm.initialize(
+            s.lastPath.takeIf { s.openLastFolder },
+            s.hideHidden,
+            s.defaultSort,
+            if (s.defaultView == "grid") ViewMode.GRID else ViewMode.LIST,
+            s.foldersFirst
+        )
         vm.setHideHidden(s.hideHidden)
         ready = true
+    }
+
+    LaunchedEffect(
+        settings?.defaultSort,
+        settings?.defaultView,
+        settings?.foldersFirst,
+        ready
+    ) {
+        val s = settings ?: return@LaunchedEffect
+        if (!ready) return@LaunchedEffect
+        vm.applyExplorerPrefs(
+            s.defaultSort,
+            if (s.defaultView == "grid") ViewMode.GRID else ViewMode.LIST,
+            s.foldersFirst
+        )
     }
 
     LaunchedEffect(browserState.currentDir.absolutePath, ready) {
@@ -97,6 +119,7 @@ fun KArchiverRoot() {
             BrowserScreen(
                 vm = vm,
                 showMainMenu = settings?.showMainMenu == true,
+                confirmDelete = settings?.confirmDelete != false,
                 barLifted = barLifted,
                 onToggleBar = { barLifted = !barLifted },
                 onOpenHome = { navController.navigate(RootRoute.HOME) },
