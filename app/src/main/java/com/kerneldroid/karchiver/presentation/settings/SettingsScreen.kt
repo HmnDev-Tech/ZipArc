@@ -1,6 +1,7 @@
 package com.kerneldroid.karchiver.presentation.settings
 
 import android.os.Build
+import android.os.SystemClock
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.layout.Arrangement
@@ -40,7 +41,11 @@ import androidx.compose.material3.ToggleButtonDefaults
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -99,6 +104,7 @@ fun SettingsScreen(
     BackHandler { onBack() }
     val scope = rememberCoroutineScope()
     val haptics = LocalHapticFeedback.current
+    var rarUnlockAt by remember { mutableLongStateOf(0L) }
 
     RoundedTopScaffold(
         barLifted = barLifted,
@@ -387,9 +393,20 @@ fun SettingsScreen(
                     index = 4,
                     count = 5,
                     title = "RAR support",
-                    subtitle = "Read RAR archives: preview, verify and extract. RAR stays read-only, packing is never enabled.",
+                    subtitle = if (settings.rarWriteEnabled) "Read and write. Packing unlocked."
+                        else "Read-only. Hold this row 5 seconds to unlock RAR packing.",
                     checked = settings.rarEnabled,
-                    onCheckedChange = { scope.launch { repo.setRarEnabled(it) } }
+                    onCheckedChange = {
+                        if (SystemClock.uptimeMillis() - rarUnlockAt < 1000L) return@SettingSwitch
+                        scope.launch { repo.setRarEnabled(it) }
+                    },
+                    modifier = Modifier.detectBarHold {
+                        if (!settings.rarWriteEnabled) {
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            rarUnlockAt = SystemClock.uptimeMillis()
+                            scope.launch { repo.setRarWriteEnabled(true) }
+                        }
+                    }
                 )
             }
             SectionHeader("Interface")
@@ -448,10 +465,12 @@ private fun SettingSwitch(
     title: String,
     subtitle: String,
     checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit
+    onCheckedChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier
 ) {
     SegmentedListItem(
         onClick = { onCheckedChange(!checked) },
+        modifier = modifier,
         shapes = ListItemDefaults.segmentedShapes(index = index, count = count),
         colors = ListItemDefaults.segmentedColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerHigh

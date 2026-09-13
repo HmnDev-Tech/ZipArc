@@ -25,7 +25,8 @@ data class AppSettings(
     val defaultView: String = "list",
     val foldersFirst: Boolean = true,
     val confirmDelete: Boolean = true,
-    val rarEnabled: Boolean = false
+    val rarEnabled: Boolean = false,
+    val rarWriteEnabled: Boolean = false
 )
 
 class SettingsRepository(private val appContext: Context) {
@@ -48,6 +49,7 @@ class SettingsRepository(private val appContext: Context) {
         val FOLDERS_FIRST = booleanPreferencesKey("folders_first")
         val CONFIRM_DELETE = booleanPreferencesKey("confirm_delete")
         val RAR_ENABLED = booleanPreferencesKey("rar_enabled")
+        val RAR_WRITE_ENABLED = booleanPreferencesKey("rar_write_enabled")
     }
 
     val recentFolders: Flow<List<String>> = appContext.dataStore.data.map { p ->
@@ -84,7 +86,8 @@ class SettingsRepository(private val appContext: Context) {
             defaultView = p[Keys.DEFAULT_VIEW] ?: "list",
             foldersFirst = p[Keys.FOLDERS_FIRST] ?: true,
             confirmDelete = p[Keys.CONFIRM_DELETE] ?: true,
-            rarEnabled = p[Keys.RAR_ENABLED] ?: false
+            rarEnabled = p[Keys.RAR_ENABLED] ?: false,
+            rarWriteEnabled = p[Keys.RAR_WRITE_ENABLED] ?: false
         )
     }
 
@@ -127,5 +130,14 @@ class SettingsRepository(private val appContext: Context) {
         appContext.dataStore.edit { it[Keys.CONFIRM_DELETE] = value }
 
     suspend fun setRarEnabled(value: Boolean) =
-        appContext.dataStore.edit { it[Keys.RAR_ENABLED] = value }
+        appContext.dataStore.edit {
+            it[Keys.RAR_ENABLED] = value
+            if (!value) it[Keys.RAR_WRITE_ENABLED] = false
+        }
+
+    suspend fun setRarWriteEnabled(value: Boolean) =
+        appContext.dataStore.edit {
+            it[Keys.RAR_WRITE_ENABLED] = value
+            if (value) it[Keys.RAR_ENABLED] = true
+        }
 }

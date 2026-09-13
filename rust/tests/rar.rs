@@ -114,18 +114,63 @@ fn rar_wrong_password_fails() {
 }
 
 #[test]
-fn rar_compress_stays_unsupported() {
+fn rar_pack_list_extract_roundtrip() {
     let dir = tempdir().unwrap();
-    let src = dir.path().join("f.txt");
-    fs::write(&src, b"x").unwrap();
+    let src = dir.path().join("src");
+    fs::create_dir_all(src.join("sub")).unwrap();
+    fs::write(src.join("hello.txt"), b"packed hello").unwrap();
+    fs::write(src.join("sub/nested.bin"), [1u8, 2, 3, 250]).unwrap();
+    let dest = dir.path().join("packed.rar");
+    backend::compress(&[src], &dest, Format::Rar, &Limits::default()).unwrap();
+    let names = backend::list(&dest, Format::Rar).unwrap();
+    assert!(names.iter().any(|e| e.ends_with("hello.txt")));
+    assert!(names.iter().any(|e| e.ends_with("nested.bin")));
+    let report = backend::test_archive(&dest, Format::Rar, &Limits::default()).unwrap();
+    assert!(report.ok(), "failures: {:?}", report.failures);
+    let out = dir.path().join("out");
+    backend::extract(&dest, &out, Format::Rar, &Limits::default()).unwrap();
+    assert_eq!(
+        fs::read_to_string(out.join("src/hello.txt")).unwrap(),
+        "packed hello"
+    );
+    assert_eq!(
+        fs::read(out.join("src/sub/nested.bin")).unwrap(),
+        [1u8, 2, 3, 250]
+    );
+}
+
+#[test]
+fn rar_pack_with_password_roundtrip() {
+    let dir = tempdir().unwrap();
+    let src = dir.path().join("secret.txt");
+    fs::write(&src, b"packed secret").unwrap();
+    let dest = dir.path().join("locked.rar");
+    backend::compress_with_password(&[src], &dest, Format::Rar, &Limits::default(), "karchiver")
+        .unwrap();
+    let listing = backend::list_detailed(&dest, Format::Rar).unwrap();
+    assert!(listing.encrypted);
+    let out = dir.path().join("out");
+    backend::extract_with_password(&dest, &out, Format::Rar, &Limits::default(), "karchiver")
+        .unwrap();
+    assert_eq!(
+        fs::read_to_string(out.join("secret.txt")).unwrap(),
+        "packed secret"
+    );
+}
+
+#[test]
+fn rar_pack_empty_dir_fails_cleanly() {
+    let dir = tempdir().unwrap();
+    let empty = dir.path().join("empty");
+    fs::create_dir_all(&empty).unwrap();
     let err = backend::compress(
-        &[src],
+        &[empty],
         &dir.path().join("out.rar"),
         Format::Rar,
         &Limits::default(),
     )
     .unwrap_err();
-    assert!(err.to_string().contains("not supported"), "{err}");
+    assert!(err.to_string().contains("no files"), "{err}");
 }
 
 #[test]

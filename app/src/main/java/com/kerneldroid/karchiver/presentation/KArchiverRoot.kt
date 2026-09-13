@@ -58,10 +58,12 @@ fun KArchiverRoot() {
             s.defaultSort,
             if (s.defaultView == "grid") ViewMode.GRID else ViewMode.LIST,
             s.foldersFirst,
-            s.rarEnabled
+            s.rarEnabled,
+            s.rarWriteEnabled
         )
         vm.setHideHidden(s.hideHidden)
         vm.setRarEnabled(s.rarEnabled)
+        vm.setRarWriteEnabled(s.rarWriteEnabled)
         ready = true
     }
 

@@ -176,9 +176,7 @@ pub fn compress(sources: &[PathBuf], dest: &Path, format: Format, limits: &Limit
         Format::SevenZ => sevenz::compress(sources, dest, limits),
         f if f.is_tar() => tar::compress(sources, dest, f, limits),
         f if f.is_single_stream() => single::compress(sources, dest, f, limits),
-        Format::Rar => Err(ArchiveError::Unsupported(
-            "RAR compression is not supported".to_string(),
-        )),
+        Format::Rar => rar::compress(sources, dest, limits),
         other => Err(ArchiveError::Unsupported(format!(
             "compression to {} is not supported",
             other.label()
@@ -263,6 +261,7 @@ pub fn compress_with_password(
     match format {
         Format::Zip => zip::compress_with_password(sources, dest, limits, password.as_bytes()),
         Format::SevenZ => sevenz::compress_with_password(sources, dest, limits, password),
+        Format::Rar => rar::compress_with_password(sources, dest, limits, password.as_bytes()),
         other => reject_password(other, "compression"),
     }
 }

@@ -1,22 +1,26 @@
-//! RAR read-only backend built on the `rars` crate.
+//! RAR backend built on the `rars` crate.
 //!
-//! Only listing, verification and extraction are implemented. Archive
-//! creation paths intentionally stay on the `Unsupported` error so the
-//! engine never packs RAR files.
+//! Listing, verification, extraction and packing are implemented. Packing
+//! targets RAR 5 with default compression and data-only passwords.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
+use std::fs::File;
 use std::io::{self, BufWriter, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use rars::{ArchiveReadOptions, ArchiveReader, AttrSource, ExtractedEntryMeta};
+use rars::{
+    ArchiveReadOptions, ArchiveReader, ArchiveVersion, AttrSource, Builder, ExtractedEntryMeta,
+    WriteProgress, WriteProgressEvent, WriterResources,
+};
 
-use crate::backend::{PreviewEntry, PreviewListing, TestFailure, TestReport};
+use crate::backend::{PreviewEntry, PreviewListing, TestFailure, TestReport, collect_sources};
 use crate::error::{ArchiveError, CANCEL_MARKER, LIMIT_MARKER, Result, classify_io};
 use crate::io_util::{
-    LimitState, Limits, check_cancelled, create_dir_all_checked, create_output_file, is_cancelled,
-    log_warn, reject_symlink_ancestors, safe_join, sanitize_entry_name, set_file_mode,
+    AtomicFile, LimitState, Limits, check_cancelled, create_dir_all_checked, create_output_file,
+    is_cancelled, log_warn, reject_symlink_ancestors, safe_join, sanitize_entry_name,
+    set_file_mode,
 };
 
 type RarsError = rars::Error;
@@ -185,6 +189,81 @@ fn marker_error(e: &ArchiveError) -> io::Error {
         ArchiveError::LimitExceeded(_) => io::Error::other(format!("{LIMIT_MARKER}: {e}")),
         other => io::Error::other(other.to_string()),
     }
+}
+
+struct CancelProgress;
+
+impl WriteProgress for CancelProgress {
+    fn report(&self, _event: WriteProgressEvent<'_>) {}
+
+    fn is_cancelled(&self) -> bool {
+        is_cancelled()
+    }
+}
+
+pub fn compress(sources: &[PathBuf], dest: &Path, limits: &Limits) -> Result<()> {
+    compress_impl(sources, dest, limits, None)
+}
+
+pub fn compress_with_password(
+    sources: &[PathBuf],
+    dest: &Path,
+    limits: &Limits,
+    password: &[u8],
+) -> Result<()> {
+    if password.is_empty() {
+        return compress_impl(sources, dest, limits, None);
+    }
+    compress_impl(sources, dest, limits, Some(password))
+}
+
+fn compress_impl(
+    sources: &[PathBuf],
+    dest: &Path,
+    limits: &Limits,
+    password: Option<&[u8]>,
+) -> Result<()> {
+    let af = AtomicFile::new(dest)?;
+    let entries = collect_sources(sources, &[dest, af.path()], limits)?;
+    if entries.iter().all(|e| e.is_dir) {
+        return Err(ArchiveError::invalid("no files to archive"));
+    }
+    let mut builder = Builder::new(ArchiveVersion::Rar50);
+    if let Some(pw) = password {
+        builder = builder.password(Some(pw.to_vec()));
+    }
+    for e in &entries {
+        check_cancelled()?;
+        if e.is_dir {
+            continue;
+        }
+        builder
+            .add_source(
+                e.name.as_bytes().to_vec(),
+                rars::EntrySource::from_path(e.path.clone()),
+                None,
+                None,
+            )
+            .map_err(|e| map_err(e, password.is_some()))?;
+    }
+    let resources =
+        WriterResources::default().with_temp_dir(af.path().parent().unwrap_or(Path::new(".")));
+    let progress = CancelProgress;
+    let out = File::options()
+        .write(true)
+        .create_new(true)
+        .open(af.path())?;
+    let mut buffered = BufWriter::new(out);
+    builder
+        .write_to(&mut buffered, &resources, Some(&progress))
+        .map_err(|e| map_err(e, password.is_some()))?;
+    buffered
+        .into_inner()
+        .map_err(|e| ArchiveError::Io(e.into_error()))?;
+    if is_cancelled() {
+        return Err(ArchiveError::Cancelled);
+    }
+    af.commit()
 }
 
 pub fn extract(archive: &Path, dest: &Path, limits: &Limits) -> Result<()> {

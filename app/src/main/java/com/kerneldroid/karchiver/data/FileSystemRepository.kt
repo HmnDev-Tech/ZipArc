@@ -21,7 +21,11 @@ enum class SortBy { NAME, DATE, SIZE, TYPE }
 
 const val RAR_DISABLED_MESSAGE = "RAR support is disabled. Enable it in Settings."
 
-class RarDisabledException : Exception(RAR_DISABLED_MESSAGE)
+open class RarAccessException(msg: String) : Exception(msg)
+
+class RarDisabledException : RarAccessException(RAR_DISABLED_MESSAGE)
+
+class RarWriteLockedException : RarAccessException("RAR packing is locked. Hold the RAR row in Settings to unlock it.")
 
 fun isRarArchive(file: File): Boolean = file.extension.lowercase() in setOf("rar", "cbr")
 
@@ -32,7 +36,8 @@ enum class CompressFormat(val extension: String, val label: String, val supports
     TAR_GZ("tar.gz", "TAR.GZ", false),
     TAR_BZ2("tar.bz2", "TAR.BZ2", false),
     TAR_XZ("tar.xz", "TAR.XZ", false),
-    TAR_ZST("tar.zst", "TAR.ZST", false)
+    TAR_ZST("tar.zst", "TAR.ZST", false),
+    RAR("rar", "RAR", true)
 }
 
 fun normalizeArchiveName(raw: String, format: CompressFormat): String {

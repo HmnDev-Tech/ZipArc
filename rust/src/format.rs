@@ -220,11 +220,6 @@ pub fn format_for_destination(path: &Path) -> Result<Format> {
     let format = Format::from_extension(&name).ok_or_else(|| {
         ArchiveError::Unsupported(format!("unsupported output format for {name:?}"))
     })?;
-    if format == Format::Rar {
-        return Err(ArchiveError::Unsupported(
-            "RAR is read-only and unsupported by this engine".to_string(),
-        ));
-    }
     Ok(format)
 }
 
@@ -268,10 +263,10 @@ mod tests {
     }
 
     #[test]
-    fn rar_destination_rejected() {
-        assert!(matches!(
-            format_for_destination(Path::new("x.rar")),
-            Err(ArchiveError::Unsupported(_))
-        ));
+    fn rar_destination_accepted() {
+        assert_eq!(
+            format_for_destination(Path::new("x.rar")).unwrap(),
+            Format::Rar
+        );
     }
 }

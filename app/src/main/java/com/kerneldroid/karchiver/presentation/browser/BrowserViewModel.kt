@@ -14,7 +14,9 @@ import com.kerneldroid.karchiver.data.FileSystemRepository
 import com.kerneldroid.karchiver.data.CompressFormat
 import com.kerneldroid.karchiver.data.FormatRegistry
 import com.kerneldroid.karchiver.data.RAR_DISABLED_MESSAGE
+import com.kerneldroid.karchiver.data.RarAccessException
 import com.kerneldroid.karchiver.data.RarDisabledException
+import com.kerneldroid.karchiver.data.RarWriteLockedException
 import com.kerneldroid.karchiver.data.isRarArchive
 import com.kerneldroid.karchiver.data.normalizeArchiveName
 import com.kerneldroid.karchiver.data.PreviewListing
@@ -55,6 +57,7 @@ data class BrowserUiState(
     val hideHidden: Boolean = false,
     val foldersFirst: Boolean = true,
     val rarEnabled: Boolean = false,
+    val rarWriteEnabled: Boolean = false,
     val isLoading: Boolean = false,
     val isSelectionMode: Boolean = false
 )
@@ -137,7 +140,7 @@ class BrowserViewModel(
     }
 
     private fun verifyMessage(e: Throwable): String {
-        if (e is RarDisabledException) return RAR_DISABLED_MESSAGE
+        if (e is RarAccessException) return e.message ?: RAR_DISABLED_MESSAGE
         val msg = e.message ?: ""
         return when {
             msg.contains("wrong password", ignoreCase = true) -> "Wrong password"
@@ -148,7 +151,7 @@ class BrowserViewModel(
     }
 
     private fun previewMessage(e: Throwable): String {
-        if (e is RarDisabledException) return RAR_DISABLED_MESSAGE
+        if (e is RarAccessException) return e.message ?: RAR_DISABLED_MESSAGE
         val msg = e.message ?: ""
         return when {
             msg.contains("wrong password", ignoreCase = true) -> "Wrong password"
@@ -160,7 +163,7 @@ class BrowserViewModel(
     }
 
     fun archiveOpMessage(e: Throwable?, successText: String, failureText: String): String {
-        if (e is RarDisabledException) return RAR_DISABLED_MESSAGE
+        if (e is RarAccessException) return e.message ?: failureText
         val msg = e?.message ?: ""
         return when {
             e == null -> successText
@@ -189,7 +192,8 @@ class BrowserViewModel(
         sortBy: SortBy = SortBy.NAME,
         viewMode: ViewMode = ViewMode.LIST,
         foldersFirst: Boolean = true,
-        rarEnabled: Boolean = false
+        rarEnabled: Boolean = false,
+        rarWriteEnabled: Boolean = false
     ) {
         if (initialized) return
         initialized = true
@@ -200,7 +204,8 @@ class BrowserViewModel(
             sortBy = sortBy,
             viewMode = viewMode,
             foldersFirst = foldersFirst,
-            rarEnabled = rarEnabled
+            rarEnabled = rarEnabled,
+            rarWriteEnabled = rarWriteEnabled
         )
         refresh()
     }
@@ -208,6 +213,11 @@ class BrowserViewModel(
     fun setRarEnabled(value: Boolean) {
         if (_state.value.rarEnabled == value) return
         _state.value = _state.value.copy(rarEnabled = value)
+    }
+
+    fun setRarWriteEnabled(value: Boolean) {
+        if (_state.value.rarWriteEnabled == value) return
+        _state.value = _state.value.copy(rarWriteEnabled = value)
     }
 
     fun applyExplorerPrefs(sortBy: SortBy, viewMode: ViewMode, foldersFirst: Boolean) {
@@ -360,6 +370,10 @@ class BrowserViewModel(
 
     fun compressSelection(name: String = "archive.zip", format: CompressFormat = CompressFormat.ZIP, password: String = "", onDone: (Result<Unit>) -> Unit = {}) {
         val files = selectedFiles(); if (files.isEmpty()) return
+        if (format == CompressFormat.RAR && !_state.value.rarWriteEnabled) {
+            onDone(Result.failure(RarWriteLockedException()))
+            return
+        }
         viewModelScope.launch {
             _archiveOpActive.value = true
             try {
