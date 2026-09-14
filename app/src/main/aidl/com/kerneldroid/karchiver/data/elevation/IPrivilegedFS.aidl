@@ -7,4 +7,5 @@ interface IPrivilegedFS {
     int deleteAll(in List<String> paths) = 2;
     int makeDirs(String path) = 3;
     int setMode(String path, int mode) = 4;
+    ParcelFileDescriptor openFile(in String path, int mode) = 5;
 }

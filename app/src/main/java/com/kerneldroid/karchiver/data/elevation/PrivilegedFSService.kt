@@ -1,5 +1,6 @@
 package com.kerneldroid.karchiver.data.elevation
 
+import android.os.ParcelFileDescriptor
 import android.system.Os
 import java.io.File
 import java.nio.file.Files
@@ -64,6 +65,22 @@ class PrivilegedFSService : IPrivilegedFS.Stub() {
             return SUCCESS
         } catch (_: Throwable) {
             return FAILURE
+        }
+    }
+
+    override fun openFile(path: String?, mode: Int): ParcelFileDescriptor? {
+        try {
+            if (path.isNullOrEmpty()) return null
+            val file = File(path)
+            if (!file.isAbsolute) return null
+            val modeFlags = when (mode) {
+                0 -> ParcelFileDescriptor.MODE_READ_ONLY
+                1 -> ParcelFileDescriptor.MODE_READ_WRITE
+                else -> return null
+            }
+            return ParcelFileDescriptor.open(file, modeFlags)
+        } catch (_: Throwable) {
+            return null
         }
     }
 

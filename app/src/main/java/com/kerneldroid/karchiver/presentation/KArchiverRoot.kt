@@ -130,6 +130,10 @@ fun KArchiverRoot() {
         )
     }
 
+    LaunchedEffect(Unit) {
+        vm.setTempDir(context.cacheDir)
+    }
+
     LaunchedEffect(browserState.currentDir.absolutePath, ready) {
         if (ready) {
             val path = browserState.currentDir.absolutePath

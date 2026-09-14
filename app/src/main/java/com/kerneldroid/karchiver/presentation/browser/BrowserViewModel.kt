@@ -97,7 +97,7 @@ class BrowserViewModel(
         val token = ++previewToken
         _preview.value = ArchivePreviewUiState(file = file, isLoading = true, passwordUsed = password)
         viewModelScope.launch {
-            val result = repo.previewArchive(file, password.ifEmpty { null })
+            val result = repo.previewArchive(file, password.ifEmpty { null }, elevationEngine(), _state.value.elevationMode)
             if (token != previewToken) return@launch
             result.fold(
                 onSuccess = { listing ->
@@ -124,7 +124,7 @@ class BrowserViewModel(
         viewModelScope.launch {
             _archiveOpActive.value = true
             try {
-                val result = repo.testArchive(file, password.ifEmpty { null })
+                val result = repo.testArchive(file, password.ifEmpty { null }, elevationEngine(), _state.value.elevationMode)
                 result.fold(
                     onSuccess = { report ->
                         _verify.value = VerifyUiState(file = file, report = report, passwordUsed = password)
@@ -220,6 +220,10 @@ class BrowserViewModel(
         if (_state.value.elevationMode == value) return
         _state.value = _state.value.copy(elevationMode = value)
         refresh()
+    }
+
+    fun setTempDir(dir: File) {
+        repo.tempDir = dir
     }
 
     private fun elevationEngine(): ElevatedFS? = when (_state.value.elevationMode) {
@@ -417,7 +421,7 @@ class BrowserViewModel(
             _archiveOpActive.value = true
             try {
                 val dest = File(file.parentFile, file.nameWithoutExtension)
-                val r = repo.extract(file, dest, password.ifEmpty { null })
+                val r = repo.extract(file, dest, password.ifEmpty { null }, elevationEngine(), _state.value.elevationMode)
                 refresh(); onDone(r)
             } finally {
                 _archiveOpActive.value = false

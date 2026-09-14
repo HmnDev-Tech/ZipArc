@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.os.IBinder
+import android.os.ParcelFileDescriptor
 import android.util.Log
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
@@ -195,6 +196,38 @@ object ShizukuEngine : ElevatedFS {
         } catch (_: Exception) {
             Log.e(TAG, "chmod failed")
             false
+        }
+    }
+
+    override suspend fun openReadFd(path: String): ParcelFileDescriptor? = withContext(Dispatchers.IO) {
+        try {
+            val service = boundService() ?: return@withContext null
+            try {
+                service.openFile(path, 0)
+            } catch (_: Exception) {
+                Log.e(TAG, "openReadFd failed")
+                dropService()
+                null
+            }
+        } catch (_: Exception) {
+            Log.e(TAG, "openReadFd failed")
+            null
+        }
+    }
+
+    override suspend fun openWriteFd(path: String): ParcelFileDescriptor? = withContext(Dispatchers.IO) {
+        try {
+            val service = boundService() ?: return@withContext null
+            try {
+                service.openFile(path, 1)
+            } catch (_: Exception) {
+                Log.e(TAG, "openWriteFd failed")
+                dropService()
+                null
+            }
+        } catch (_: Exception) {
+            Log.e(TAG, "openWriteFd failed")
+            null
         }
     }
 

@@ -1,11 +1,15 @@
 package com.kerneldroid.karchiver.data
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import com.kerneldroid.karchiver.data.elevation.ElevatedFS
+import com.kerneldroid.karchiver.data.elevation.RootEngine
+import com.kerneldroid.karchiver.data.elevation.ShizukuEngine
+import com.kerneldroid.karchiver.data.elevation.requireCaps
 
 data class FileItem(
     val file: File,
@@ -114,6 +118,8 @@ data class TestReport(
 }
 
 class FileSystemRepository {
+
+    var tempDir: File? = null
 
     suspend fun listDir(
         path: File,
@@ -271,50 +277,228 @@ class FileSystemRepository {
         }
     }
 
-    suspend fun extract(archive: File, destDir: File, password: String? = null): Result<Unit> = withContext(Dispatchers.IO) {
+    suspend fun extract(
+        archive: File,
+        destDir: File,
+        password: String? = null,
+        elevated: ElevatedFS? = null,
+        elevationMode: String = "off"
+    ): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
-            destDir.mkdirs()
-            if (!RustBridge.isLoaded()) {
-                if (!password.isNullOrEmpty()) error("Password protection requires the native engine")
-                fallbackUnzip(archive, destDir)
-            } else {
-                val code = if (password.isNullOrEmpty()) {
-                    RustBridge.extract(archive.absolutePath, destDir.absolutePath)
-                } else {
-                    RustBridge.extractWithPassword(archive.absolutePath, destDir.absolutePath, password)
-                }
-                if (code != 0) error("Rust extract failed code=$code")
-            }
+            normalExtract(archive, destDir, password)
+        }.recoverCatching { e ->
+            val eng = elevated ?: throw e
+            if (archive.canRead()) throw e
+            extractElevated(archive, destDir, password, eng, elevationMode).getOrThrow()
         }
     }
 
-    suspend fun previewArchive(archive: File, password: String? = null): Result<PreviewListing> = withContext(Dispatchers.IO) {
-        runCatching {
-            if (!RustBridge.isLoaded()) {
-                fallbackPreview(archive)
+    private fun normalExtract(archive: File, destDir: File, password: String?) {
+        destDir.mkdirs()
+        if (!RustBridge.isLoaded()) {
+            if (!password.isNullOrEmpty()) error("Password protection requires the native engine")
+            fallbackUnzip(archive, destDir)
+        } else {
+            val code = if (password.isNullOrEmpty()) {
+                RustBridge.extract(archive.absolutePath, destDir.absolutePath)
             } else {
-                val json = if (password.isNullOrEmpty()) {
-                    RustBridge.listArchiveDetailed(archive.absolutePath)
-                } else {
-                    RustBridge.listArchiveDetailedWithPassword(archive.absolutePath, password)
-                }
-                parsePreviewJson(json)
+                RustBridge.extractWithPassword(archive.absolutePath, destDir.absolutePath, password)
             }
+            if (code != 0) error("Rust extract failed code=$code")
         }
     }
 
-    suspend fun testArchive(archive: File, password: String? = null): Result<TestReport> = withContext(Dispatchers.IO) {
-        runCatching {
-            if (!RustBridge.isLoaded()) {
-                fallbackTest(archive)
-            } else {
-                val json = if (password.isNullOrEmpty()) {
-                    RustBridge.testArchive(archive.absolutePath)
-                } else {
-                    RustBridge.testArchiveWithPassword(archive.absolutePath, password)
+    private suspend fun extractElevated(
+        archive: File,
+        destDir: File,
+        password: String?,
+        eng: ElevatedFS,
+        mode: String
+    ): Result<Unit> {
+        try {
+            requireCaps(archive, mode)
+            if (!RustBridge.isLoaded()) error("Native engine required")
+            when (eng) {
+                is ShizukuEngine -> {
+                    val pfd = eng.openReadFd(archive.absolutePath) ?: error("Cannot open file")
+                    try {
+                        val code = if (password.isNullOrEmpty()) {
+                            RustBridge.extractFd(pfd.fd, destDir.absolutePath)
+                        } else {
+                            RustBridge.extractWithPasswordFd(pfd.fd, destDir.absolutePath, password)
+                        }
+                        if (code != 0) error("Rust extract failed code=$code")
+                    } finally {
+                        closeQuietly(pfd)
+                    }
                 }
-                parseTestJson(json)
+                is RootEngine -> {
+                    val tmp = tempDir ?: error("No temp dir")
+                    tmp.mkdirs()
+                    val staged = File(tmp, "elevated-" + archive.name)
+                    if (!eng.copyInto(archive, staged)) error("Cannot read file")
+                    try {
+                        normalExtract(staged, destDir, password)
+                    } finally {
+                        staged.delete()
+                    }
+                }
+                else -> error("Cannot read file")
             }
+            return Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            return Result.failure(e)
+        }
+    }
+
+    private fun closeQuietly(pfd: android.os.ParcelFileDescriptor) {
+        try {
+            pfd.close()
+        } catch (_: Exception) {
+        }
+    }
+
+    suspend fun previewArchive(
+        archive: File,
+        password: String? = null,
+        elevated: ElevatedFS? = null,
+        elevationMode: String = "off"
+    ): Result<PreviewListing> = withContext(Dispatchers.IO) {
+        runCatching {
+            normalPreview(archive, password)
+        }.recoverCatching { e ->
+            val eng = elevated ?: throw e
+            if (archive.canRead()) throw e
+            previewElevated(archive, password, eng, elevationMode).getOrThrow()
+        }
+    }
+
+    private fun normalPreview(archive: File, password: String?): PreviewListing {
+        if (!RustBridge.isLoaded()) {
+            return fallbackPreview(archive)
+        }
+        val json = if (password.isNullOrEmpty()) {
+            RustBridge.listArchiveDetailed(archive.absolutePath)
+        } else {
+            RustBridge.listArchiveDetailedWithPassword(archive.absolutePath, password)
+        }
+        return parsePreviewJson(json)
+    }
+
+    private suspend fun previewElevated(
+        archive: File,
+        password: String?,
+        eng: ElevatedFS,
+        mode: String
+    ): Result<PreviewListing> {
+        return try {
+            requireCaps(archive, mode)
+            if (!RustBridge.isLoaded()) error("Native engine required")
+            val out: PreviewListing = when (eng) {
+                is ShizukuEngine -> {
+                    val pfd = eng.openReadFd(archive.absolutePath) ?: error("Cannot open file")
+                    try {
+                        val json = if (password.isNullOrEmpty()) {
+                            RustBridge.listArchiveDetailedFd(pfd.fd)
+                        } else {
+                            RustBridge.listArchiveDetailedWithPasswordFd(pfd.fd, password)
+                        }
+                        parsePreviewJson(json)
+                    } finally {
+                        closeQuietly(pfd)
+                    }
+                }
+                is RootEngine -> {
+                    val tmp = tempDir ?: error("No temp dir")
+                    tmp.mkdirs()
+                    val staged = File(tmp, "elevated-" + archive.name)
+                    if (!eng.copyInto(archive, staged)) error("Cannot read file")
+                    try {
+                        normalPreview(staged, password)
+                    } finally {
+                        staged.delete()
+                    }
+                }
+                else -> error("Cannot read file")
+            }
+            Result.success(out)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun testArchive(
+        archive: File,
+        password: String? = null,
+        elevated: ElevatedFS? = null,
+        elevationMode: String = "off"
+    ): Result<TestReport> = withContext(Dispatchers.IO) {
+        runCatching {
+            normalTest(archive, password)
+        }.recoverCatching { e ->
+            val eng = elevated ?: throw e
+            if (archive.canRead()) throw e
+            testElevated(archive, password, eng, elevationMode).getOrThrow()
+        }
+    }
+
+    private fun normalTest(archive: File, password: String?): TestReport {
+        if (!RustBridge.isLoaded()) {
+            return fallbackTest(archive)
+        }
+        val json = if (password.isNullOrEmpty()) {
+            RustBridge.testArchive(archive.absolutePath)
+        } else {
+            RustBridge.testArchiveWithPassword(archive.absolutePath, password)
+        }
+        return parseTestJson(json)
+    }
+
+    private suspend fun testElevated(
+        archive: File,
+        password: String?,
+        eng: ElevatedFS,
+        mode: String
+    ): Result<TestReport> {
+        return try {
+            requireCaps(archive, mode)
+            if (!RustBridge.isLoaded()) error("Native engine required")
+            val out: TestReport = when (eng) {
+                is ShizukuEngine -> {
+                    val pfd = eng.openReadFd(archive.absolutePath) ?: error("Cannot open file")
+                    try {
+                        val json = if (password.isNullOrEmpty()) {
+                            RustBridge.testArchiveFd(pfd.fd)
+                        } else {
+                            RustBridge.testArchiveWithPasswordFd(pfd.fd, password)
+                        }
+                        parseTestJson(json)
+                    } finally {
+                        closeQuietly(pfd)
+                    }
+                }
+                is RootEngine -> {
+                    val tmp = tempDir ?: error("No temp dir")
+                    tmp.mkdirs()
+                    val staged = File(tmp, "elevated-" + archive.name)
+                    if (!eng.copyInto(archive, staged)) error("Cannot read file")
+                    try {
+                        normalTest(staged, password)
+                    } finally {
+                        staged.delete()
+                    }
+                }
+                else -> error("Cannot read file")
+            }
+            Result.success(out)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Result.failure(e)
         }
     }
 
@@ -450,5 +634,11 @@ object RustBridge {
     @JvmStatic external fun listArchiveDetailedWithPassword(archivePath: String, password: String): String
     @JvmStatic external fun testArchive(archivePath: String): String
     @JvmStatic external fun testArchiveWithPassword(archivePath: String, password: String): String
+    @JvmStatic external fun extractFd(fd: Int, destDir: String): Int
+    @JvmStatic external fun extractWithPasswordFd(fd: Int, destDir: String, password: String): Int
+    @JvmStatic external fun listArchiveDetailedFd(fd: Int): String
+    @JvmStatic external fun listArchiveDetailedWithPasswordFd(fd: Int, password: String): String
+    @JvmStatic external fun testArchiveFd(fd: Int): String
+    @JvmStatic external fun testArchiveWithPasswordFd(fd: Int, password: String): String
     @JvmStatic external fun cancel()
 }

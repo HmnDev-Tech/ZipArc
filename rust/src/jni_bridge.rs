@@ -7,7 +7,7 @@
 //! not change.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use jni::JNIEnv;
 use jni::objects::{JClass, JObject, JObjectArray, JString};
@@ -450,4 +450,202 @@ pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_testArchiv
             JString::default()
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// File-descriptor variants.
+//
+// Archives living in protected directories (app-private /data/data,
+// Android/data) cannot be opened by path (EACCES). Kotlin passes an INT fd
+// (e.g. from a Shizuku ParcelFileDescriptor) and Rust opens the magic path
+// `/proc/self/fd/<N>`. Opening that path creates an INDEPENDENT file
+// description, so Rust never owns or closes the caller's fd; Kotlin keeps
+// ownership and closes after the call. All I/O flows through the same
+// `backend::*` calls, so the existing `Limits`/cancel machinery applies
+// unchanged. An invalid fd surfaces as `ArchiveError::Io` (thrown as
+// RuntimeException by the JNI layer) — never a panic/unwrap.
+// ---------------------------------------------------------------------------
+
+/// Map a caller-provided fd to its magic `/proc/self/fd/<N>` path.
+#[allow(non_snake_case)]
+fn fdPath(fd: jint) -> PathBuf {
+    PathBuf::from(format!("/proc/self/fd/{fd}"))
+}
+
+/// Shared extract core for path and fd entry points.
+fn do_extract(archive: &Path, dest: &Path, password: Option<&str>) -> Result<()> {
+    // Explicit probe so an invalid fd surfaces as ArchiveError::Io here. The
+    // opened File is an independent description dropped immediately; the
+    // caller's fd is untouched.
+    std::fs::File::open(archive).map(|_| ())?;
+    let format = format::detect(archive)?;
+    match password {
+        Some(p) => backend::extract_with_password(archive, dest, format, &Limits::default(), p),
+        None => backend::extract(archive, dest, format, &Limits::default()),
+    }
+}
+
+/// Shared preview core: identical JSON shape via [`preview_to_json`].
+fn do_preview(archive: &Path, password: Option<&str>) -> Result<String> {
+    std::fs::File::open(archive).map(|_| ())?;
+    let format = format::detect(archive)?;
+    let listing = match password {
+        Some(p) => backend::list_detailed_with_password(archive, format, p)?,
+        None => backend::list_detailed(archive, format)?,
+    };
+    preview_to_json(&listing)
+}
+
+/// Shared test core: identical JSON shape via [`test_report_to_json`] /
+/// [`password_required_json`].
+fn do_test(archive: &Path, password: Option<&str>) -> Result<String> {
+    std::fs::File::open(archive).map(|_| ())?;
+    let format = format::detect(archive)?;
+    let report = match password {
+        Some(p) => backend::test_archive_with_password(archive, format, &Limits::default(), p),
+        None => backend::test_archive(archive, format, &Limits::default()),
+    };
+    match report {
+        Ok(r) => test_report_to_json(&r),
+        Err(ArchiveError::PasswordRequired(_)) => password_required_json(),
+        Err(e) => Err(e),
+    }
+}
+
+/// Shared JNI string-result finisher so fd and path variants throw identical
+/// `RuntimeException` shapes with only the `op` label differing.
+fn finish_json_string<'local>(
+    env: &mut JNIEnv<'local>,
+    op: &str,
+    outcome: std::thread::Result<Result<String>>,
+) -> JString<'local> {
+    match outcome {
+        Ok(Ok(json)) => match env.new_string(json) {
+            Ok(s) => s,
+            Err(e) => {
+                throw(env, format!("{op} failed: {e}"));
+                JString::default()
+            }
+        },
+        Ok(Err(e)) => {
+            throw(env, format!("{op} failed: {e}"));
+            JString::default()
+        }
+        Err(_) => {
+            throw(env, format!("{op} failed: internal panic"));
+            JString::default()
+        }
+    }
+}
+
+/// `extractFd(fd: Int, destDir: String): Int`
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_extractFd(
+    mut env: JNIEnv,
+    _class: JClass,
+    fd: jint,
+    dest_str: JString,
+) -> jint {
+    let outcome = catch_unwind(AssertUnwindSafe(|| -> Result<()> {
+        clear_cancel();
+        let archive = fdPath(fd);
+        let dest = PathBuf::from(read_string(&mut env, &dest_str)?);
+        do_extract(&archive, &dest, None)
+    }));
+    finish_int(&mut env, "extractFd", outcome)
+}
+
+/// `extractWithPasswordFd(fd: Int, destDir: String, password: String): Int`
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_extractWithPasswordFd(
+    mut env: JNIEnv,
+    _class: JClass,
+    fd: jint,
+    dest_str: JString,
+    password_str: JString,
+) -> jint {
+    let outcome = catch_unwind(AssertUnwindSafe(|| -> Result<()> {
+        clear_cancel();
+        let archive = fdPath(fd);
+        let dest = PathBuf::from(read_string(&mut env, &dest_str)?);
+        let password = read_string(&mut env, &password_str)?;
+        let result = do_extract(&archive, &dest, Some(&password));
+        wipe_password(password);
+        result
+    }));
+    finish_int(&mut env, "extractWithPasswordFd", outcome)
+}
+
+/// `listArchiveDetailedFd(fd: Int): String` (JSON preview)
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_listArchiveDetailedFd<
+    'local,
+>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    fd: jint,
+) -> JString<'local> {
+    let outcome = catch_unwind(AssertUnwindSafe(|| -> Result<String> {
+        clear_cancel();
+        let archive = fdPath(fd);
+        do_preview(&archive, None)
+    }));
+    finish_json_string(&mut env, "listArchiveDetailedFd", outcome)
+}
+
+/// `listArchiveDetailedWithPasswordFd(fd: Int, password: String): String`
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_listArchiveDetailedWithPasswordFd<
+    'local,
+>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    fd: jint,
+    password_str: JString<'local>,
+) -> JString<'local> {
+    let outcome = catch_unwind(AssertUnwindSafe(|| -> Result<String> {
+        clear_cancel();
+        let archive = fdPath(fd);
+        let password = read_string(&mut env, &password_str)?;
+        let result = do_preview(&archive, Some(&password));
+        wipe_password(password);
+        result
+    }));
+    finish_json_string(&mut env, "listArchiveDetailedWithPasswordFd", outcome)
+}
+
+/// `testArchiveFd(fd: Int): String` (JSON report)
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_testArchiveFd<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    fd: jint,
+) -> JString<'local> {
+    let outcome = catch_unwind(AssertUnwindSafe(|| -> Result<String> {
+        clear_cancel();
+        let archive = fdPath(fd);
+        do_test(&archive, None)
+    }));
+    finish_json_string(&mut env, "testArchiveFd", outcome)
+}
+
+/// `testArchiveWithPasswordFd(fd: Int, password: String): String`
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_testArchiveWithPasswordFd<
+    'local,
+>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    fd: jint,
+    password_str: JString<'local>,
+) -> JString<'local> {
+    let outcome = catch_unwind(AssertUnwindSafe(|| -> Result<String> {
+        clear_cancel();
+        let archive = fdPath(fd);
+        let password = read_string(&mut env, &password_str)?;
+        let result = do_test(&archive, Some(&password));
+        wipe_password(password);
+        result
+    }));
+    finish_json_string(&mut env, "testArchiveWithPasswordFd", outcome)
 }

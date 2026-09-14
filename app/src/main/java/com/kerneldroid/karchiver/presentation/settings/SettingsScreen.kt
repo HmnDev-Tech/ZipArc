@@ -522,6 +522,12 @@ fun SettingsScreen(
                         subtitle = rootStatusLabel(rootStatus),
                         onSelect = { scope.launch { repo.setElevationMode("root") } }
                     )
+                    Text(
+                        "Shizuku cannot open app-private data (SELinux policy). Root sees everything.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
                 }
             },
             confirmButton = {
