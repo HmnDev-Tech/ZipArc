@@ -4,29 +4,48 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.kerneldroid.karchiver.data.AppSettings
 import com.kerneldroid.karchiver.data.SettingsRepository
 import com.kerneldroid.karchiver.presentation.browser.BrowserScreen
 import com.kerneldroid.karchiver.presentation.browser.BrowserViewModel
 import com.kerneldroid.karchiver.presentation.browser.ViewMode
+import com.kerneldroid.karchiver.presentation.components.CustomNavigationDrawerItem
+import com.kerneldroid.karchiver.presentation.components.DrawerDestination
 import com.kerneldroid.karchiver.presentation.home.HomeScreen
 import com.kerneldroid.karchiver.presentation.settings.SettingsScreen
 import java.io.File
+import kotlinx.coroutines.launch
 
 private object RootRoute {
     const val BROWSER = "browser"
@@ -49,6 +68,33 @@ fun KArchiverRoot() {
     var ready by remember { mutableStateOf(false) }
     var historyPrimed by remember { mutableStateOf(false) }
     var barLifted by rememberSaveable { mutableStateOf(false) }
+    val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
+    val drawerScope = rememberCoroutineScope()
+    val haptics = LocalHapticFeedback.current
+    val backStack by navController.currentBackStackEntryAsState()
+    val currentRoute = backStack?.destination?.route
+
+    val destinations = remember {
+        listOf(
+            DrawerDestination(RootRoute.BROWSER, "Files", Icons.Filled.Folder),
+            DrawerDestination(RootRoute.HOME, "Home", Icons.Filled.Home),
+            DrawerDestination(RootRoute.SETTINGS, "Settings", Icons.Filled.Settings)
+        )
+    }
+
+    fun openDrawer() {
+        drawerScope.launch { drawerState.open() }
+    }
+
+    fun selectDestination(route: String) {
+        haptics.performHapticFeedback(HapticFeedbackType.SegmentFrequentTick)
+        navController.navigate(route) {
+            popUpTo(navController.graph.startDestinationId) { saveState = true }
+            launchSingleTop = true
+            restoreState = true
+        }
+        drawerScope.launch { drawerState.close() }
+    }
 
     LaunchedEffect(settings) {
         val s = settings ?: return@LaunchedEffect
@@ -91,6 +137,22 @@ fun KArchiverRoot() {
         }
     }
 
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        drawerContent = {
+            ModalDrawerSheet {
+                Spacer(modifier = Modifier.height(30.dp))
+                destinations.forEach { destination ->
+                    CustomNavigationDrawerItem(
+                        selected = currentRoute == destination.route,
+                        onSelected = { selectDestination(destination.route) },
+                        icon = destination.icon,
+                        text = destination.label
+                    )
+                }
+            }
+        }
+    ) {
     NavHost(
         navController = navController,
         startDestination = RootRoute.BROWSER,
@@ -122,12 +184,11 @@ fun KArchiverRoot() {
         composable(RootRoute.BROWSER) {
             BrowserScreen(
                 vm = vm,
-                showMainMenu = settings?.showMainMenu == true,
                 confirmDelete = settings?.confirmDelete != false,
                 rarEnabled = settings?.rarEnabled == true,
                 barLifted = barLifted,
                 onToggleBar = { barLifted = !barLifted },
-                onOpenHome = { navController.navigate(RootRoute.HOME) },
+                onOpenDrawer = ::openDrawer,
                 onOpenSettings = { navController.navigate(RootRoute.SETTINGS) }
             )
         }
@@ -135,9 +196,12 @@ fun KArchiverRoot() {
             HomeScreen(
                 onOpenPath = { path ->
                     vm.navigateTo(File(path))
-                    navController.popBackStack(RootRoute.BROWSER, inclusive = false)
+                    navController.navigate(RootRoute.BROWSER) {
+                        popUpTo(navController.graph.startDestinationId)
+                        launchSingleTop = true
+                    }
                 },
-                onOpenSettings = { navController.navigate(RootRoute.SETTINGS) },
+                onOpenDrawer = ::openDrawer,
                 onBack = { navController.popBackStack() },
                 recentFolders = recents,
                 barLifted = barLifted,
@@ -153,5 +217,6 @@ fun KArchiverRoot() {
                 onToggleBar = { barLifted = !barLifted }
             )
         }
+    }
     }
 }

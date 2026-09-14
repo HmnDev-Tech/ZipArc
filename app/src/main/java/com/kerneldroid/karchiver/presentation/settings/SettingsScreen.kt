@@ -4,6 +4,8 @@ import android.os.Build
 import android.os.SystemClock
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -41,8 +43,10 @@ import androidx.compose.material3.ToggleButtonDefaults
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -63,6 +67,8 @@ import com.kerneldroid.karchiver.data.SortBy
 import com.kerneldroid.karchiver.data.ThemeMode
 import com.kerneldroid.karchiver.presentation.components.RoundedTopScaffold
 import com.kerneldroid.karchiver.presentation.components.detectBarHold
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private data class SeedColor(val color: Color, val name: String)
@@ -105,6 +111,16 @@ fun SettingsScreen(
     val scope = rememberCoroutineScope()
     val haptics = LocalHapticFeedback.current
     var rarUnlockAt by remember { mutableLongStateOf(0L) }
+    val rarInteractions = remember { MutableInteractionSource() }
+    var rarUnlockJob by remember { mutableStateOf<Job?>(null) }
+    LaunchedEffect(rarInteractions) {
+        rarInteractions.interactions.collect { interaction ->
+            if (interaction is PressInteraction.Release || interaction is PressInteraction.Cancel) {
+                rarUnlockJob?.cancel()
+                rarUnlockJob = null
+            }
+        }
+    }
 
     RoundedTopScaffold(
         barLifted = barLifted,
@@ -400,11 +416,16 @@ fun SettingsScreen(
                         if (SystemClock.uptimeMillis() - rarUnlockAt < 1000L) return@SettingSwitch
                         scope.launch { repo.setRarEnabled(it) }
                     },
-                    modifier = Modifier.detectBarHold {
+                    interactionSource = rarInteractions,
+                    onLongClick = {
                         if (!settings.rarWriteEnabled) {
-                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                            rarUnlockAt = SystemClock.uptimeMillis()
-                            scope.launch { repo.setRarWriteEnabled(true) }
+                            rarUnlockJob?.cancel()
+                            rarUnlockJob = scope.launch {
+                                delay(5000L)
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                rarUnlockAt = SystemClock.uptimeMillis()
+                                repo.setRarWriteEnabled(true)
+                            }
                         }
                     }
                 )
@@ -413,23 +434,15 @@ fun SettingsScreen(
             Column(verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap)) {
                 SettingSwitch(
                     index = 0,
-                    count = 3,
-                    title = "Main menu",
-                    subtitle = "Show a button that opens the main menu. By default the app opens a folder directly.",
-                    checked = settings.showMainMenu,
-                    onCheckedChange = { scope.launch { repo.setShowMainMenu(it) } }
-                )
-                SettingSwitch(
-                    index = 1,
-                    count = 3,
+                    count = 2,
                     title = "Open last folder",
                     subtitle = "Return to the folder you were in when the app starts.",
                     checked = settings.openLastFolder,
                     onCheckedChange = { scope.launch { repo.setOpenLastFolder(it) } }
                 )
                 SettingSwitch(
-                    index = 2,
-                    count = 3,
+                    index = 1,
+                    count = 2,
                     title = "Hide hidden files",
                     subtitle = "Do not show files and folders whose name starts with a dot.",
                     checked = settings.hideHidden,
@@ -466,7 +479,9 @@ private fun SettingSwitch(
     subtitle: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    interactionSource: MutableInteractionSource? = null,
+    onLongClick: (() -> Unit)? = null
 ) {
     SegmentedListItem(
         onClick = { onCheckedChange(!checked) },
@@ -479,6 +494,8 @@ private fun SettingSwitch(
         trailingContent = {
             Switch(checked = checked, onCheckedChange = onCheckedChange)
         },
+        interactionSource = interactionSource,
+        onLongClick = onLongClick
     ) {
         Text(title)
     }

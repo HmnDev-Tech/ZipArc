@@ -14,7 +14,6 @@ private val Context.dataStore by preferencesDataStore(name = "karchiver_settings
 enum class ThemeMode { SYSTEM, LIGHT, DARK, OLED }
 
 data class AppSettings(
-    val showMainMenu: Boolean = false,
     val openLastFolder: Boolean = true,
     val hideHidden: Boolean = false,
     val lastPath: String? = null,
@@ -36,7 +35,6 @@ class SettingsRepository(private val appContext: Context) {
     }
 
     private object Keys {
-        val SHOW_MAIN_MENU = booleanPreferencesKey("show_main_menu")
         val OPEN_LAST_FOLDER = booleanPreferencesKey("open_last_folder")
         val HIDE_HIDDEN = booleanPreferencesKey("hide_hidden")
         val LAST_PATH = stringPreferencesKey("last_path")
@@ -73,7 +71,6 @@ class SettingsRepository(private val appContext: Context) {
 
     val settings: Flow<AppSettings> = appContext.dataStore.data.map { p ->
         AppSettings(
-            showMainMenu = p[Keys.SHOW_MAIN_MENU] ?: false,
             openLastFolder = p[Keys.OPEN_LAST_FOLDER] ?: true,
             hideHidden = p[Keys.HIDE_HIDDEN] ?: false,
             lastPath = p[Keys.LAST_PATH],
@@ -90,9 +87,6 @@ class SettingsRepository(private val appContext: Context) {
             rarWriteEnabled = p[Keys.RAR_WRITE_ENABLED] ?: false
         )
     }
-
-    suspend fun setShowMainMenu(value: Boolean) =
-        appContext.dataStore.edit { it[Keys.SHOW_MAIN_MENU] = value }
 
     suspend fun setOpenLastFolder(value: Boolean) =
         appContext.dataStore.edit { it[Keys.OPEN_LAST_FOLDER] = value }

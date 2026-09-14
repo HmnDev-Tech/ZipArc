@@ -17,16 +17,15 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AudioFile
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.SdStorage
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.VideoFile
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Card
@@ -74,7 +73,7 @@ private data class HomeEntry(val title: String, val path: String, val icon: Imag
 @Composable
 fun HomeScreen(
     onOpenPath: (String) -> Unit,
-    onOpenSettings: () -> Unit,
+    onOpenDrawer: () -> Unit,
     onBack: () -> Unit,
     recentFolders: List<String> = emptyList(),
     barLifted: Boolean = false,
@@ -105,12 +104,9 @@ fun HomeScreen(
                 ),
                 title = { Text("KArchiver") },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
+                    IconButton(onClick = onOpenDrawer) {
+                        Icon(Icons.Filled.Menu, "Menu")
                     }
-                },
-                actions = {
-                    IconButton(onClick = onOpenSettings) { Icon(Icons.Filled.Settings, "Settings") }
                 }
             )
         }

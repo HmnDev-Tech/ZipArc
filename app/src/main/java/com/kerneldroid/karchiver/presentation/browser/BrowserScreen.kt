@@ -81,12 +81,11 @@ private const val SCROLL_TOP_JUMP_THRESHOLD = 12
 @Composable
 fun BrowserScreen(
     vm: BrowserViewModel,
-    showMainMenu: Boolean,
     confirmDelete: Boolean = true,
     rarEnabled: Boolean = false,
     barLifted: Boolean,
     onToggleBar: () -> Unit,
-    onOpenHome: () -> Unit,
+    onOpenDrawer: () -> Unit,
     onOpenSettings: () -> Unit
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
@@ -215,11 +214,9 @@ fun BrowserScreen(
                     BrowserTopBar(
                         current = state.currentDir,
                         itemCount = state.items.size,
-                        showMainMenu = showMainMenu,
                         canGoUp = vm.canGoUp(),
                         onNavigateUp = { vm.navigateUp() },
-                        onOpenHome = onOpenHome,
-                        onOpenSettings = onOpenSettings,
+                        onOpenDrawer = onOpenDrawer,
                         onToggleSearch = { searchActive = true },
                         onOpenSort = { showSortSheet = true }
                     )
@@ -669,11 +666,9 @@ private fun CreateFabMenu(onCreateFolder: () -> Unit, onCreateFile: () -> Unit) 
 private fun BrowserTopBar(
     current: File,
     itemCount: Int,
-    showMainMenu: Boolean,
     canGoUp: Boolean,
     onNavigateUp: () -> Unit,
-    onOpenHome: () -> Unit,
-    onOpenSettings: () -> Unit,
+    onOpenDrawer: () -> Unit,
     onToggleSearch: () -> Unit,
     onOpenSort: () -> Unit
 ) {
@@ -703,15 +698,14 @@ private fun BrowserTopBar(
                 canGoUp -> IconButton(onClick = onNavigateUp) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, "Up")
                 }
-                showMainMenu -> IconButton(onClick = onOpenHome) {
-                    Icon(Icons.Filled.Home, "Main menu")
+                else -> IconButton(onClick = onOpenDrawer) {
+                    Icon(Icons.Filled.Menu, "Menu")
                 }
             }
         },
         actions = {
             IconButton(onClick = onToggleSearch) { Icon(Icons.Filled.Search, "Search") }
             IconButton(onClick = onOpenSort) { Icon(Icons.Filled.SortByAlpha, "Sort and view") }
-            IconButton(onClick = onOpenSettings) { Icon(Icons.Filled.Settings, "Settings") }
         }
     )
 }
