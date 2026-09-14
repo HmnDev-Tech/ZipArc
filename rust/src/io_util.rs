@@ -21,6 +21,26 @@ pub const CODE_OK: i32 = 0;
 pub const CODE_CANCELLED: i32 = 2;
 
 static CANCEL_FLAG: AtomicBool = AtomicBool::new(false);
+static PROGRESS_DONE: AtomicU64 = AtomicU64::new(0);
+static PROGRESS_TOTAL: AtomicU64 = AtomicU64::new(0);
+
+pub fn progress_reset(total: u64) {
+    PROGRESS_DONE.store(0, Ordering::Relaxed);
+    PROGRESS_TOTAL.store(total, Ordering::Relaxed);
+}
+
+pub fn progress_add(n: u64) {
+    let _ = PROGRESS_DONE.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+        Some(v.saturating_add(n))
+    });
+}
+
+pub fn progress_get() -> (u64, u64) {
+    (
+        PROGRESS_DONE.load(Ordering::Relaxed),
+        PROGRESS_TOTAL.load(Ordering::Relaxed),
+    )
+}
 
 pub fn request_cancel() {
     CANCEL_FLAG.store(true, Ordering::Relaxed);
@@ -266,6 +286,7 @@ impl<R: Read> Read for LimitedReader<R> {
         let n = self.inner.read(&mut buf[..cap])?;
         self.remaining -= n as u64;
         self.count += n as u64;
+        progress_add(n as u64);
         Ok(n)
     }
 }
@@ -581,6 +602,8 @@ pub fn wipe_bytes(buf: &mut [u8]) {
 mod tests {
     use super::*;
 
+    static PROGRESS_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     fn root() -> PathBuf {
         PathBuf::from("/tmp/karchiver-dest")
     }
@@ -647,6 +670,7 @@ mod tests {
 
     #[test]
     fn limited_reader_enforces_budget() {
+        let _guard = PROGRESS_TEST_LOCK.lock().unwrap();
         let data = [0u8; 64];
         let mut r = LimitedReader::new(&data[..], 32);
         let mut out = Vec::new();
@@ -658,11 +682,39 @@ mod tests {
 
     #[test]
     fn limited_reader_allows_exact_budget() {
+        let _guard = PROGRESS_TEST_LOCK.lock().unwrap();
         let data = [0u8; 32];
         let mut r = LimitedReader::new(&data[..], 32);
         let mut out = Vec::new();
         io::copy(&mut r, &mut out).unwrap();
         assert_eq!(out.len(), 32);
         assert!(!r.limit_hit());
+    }
+
+    #[test]
+    fn progress_reset_add_get_saturates() {
+        let _guard = PROGRESS_TEST_LOCK.lock().unwrap();
+        progress_reset(100);
+        assert_eq!(progress_get(), (0, 100));
+        progress_add(30);
+        assert_eq!(progress_get(), (30, 100));
+        progress_add(u64::MAX);
+        assert_eq!(progress_get(), (u64::MAX, 100));
+        progress_reset(0);
+        assert_eq!(progress_get(), (0, 0));
+    }
+
+    #[test]
+    fn limited_reader_advances_progress() {
+        let _guard = PROGRESS_TEST_LOCK.lock().unwrap();
+        progress_reset(1000);
+        let data = [7u8; 64];
+        let mut r = LimitedReader::new(std::io::Cursor::new(&data[..]), 64);
+        let mut out = Vec::new();
+        io::copy(&mut r, &mut out).unwrap();
+        assert_eq!(out.len(), 64);
+        assert_eq!(r.count(), 64);
+        assert_eq!(progress_get(), (64, 1000));
+        progress_reset(0);
     }
 }

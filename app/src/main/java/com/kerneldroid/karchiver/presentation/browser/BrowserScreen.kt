@@ -7,6 +7,7 @@
 package com.kerneldroid.karchiver.presentation.browser
 
 import android.os.Environment
+import android.text.format.Formatter
 import android.content.pm.ResolveInfo
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
@@ -55,6 +56,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
@@ -68,6 +71,7 @@ import com.kerneldroid.karchiver.data.RAR_DISABLED_MESSAGE
 import com.kerneldroid.karchiver.data.isRarArchive
 import com.kerneldroid.karchiver.data.SortBy
 import com.kerneldroid.karchiver.data.normalizeArchiveName
+import com.kerneldroid.karchiver.data.archive.OpKind
 import com.kerneldroid.karchiver.presentation.components.RoundedTopScaffold
 import com.kerneldroid.karchiver.presentation.components.detectBarHold
 import kotlinx.coroutines.launch
@@ -92,7 +96,9 @@ fun BrowserScreen(
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val refreshing by vm.refreshing.collectAsStateWithLifecycle()
-    val archiveOpActive by vm.archiveOpActive.collectAsStateWithLifecycle()
+    val activeOp by vm.archiveOp.collectAsStateWithLifecycle()
+    val dialogVisible by vm.progressDialogVisible.collectAsStateWithLifecycle()
+    val verifyActive by vm.verifyActive.collectAsStateWithLifecycle()
     val preview by vm.preview.collectAsStateWithLifecycle()
     val verify by vm.verify.collectAsStateWithLifecycle()
     val haptics = LocalHapticFeedback.current
@@ -224,7 +230,15 @@ fun BrowserScreen(
                         onNavigateUp = { vm.navigateUp() },
                         onOpenDrawer = onOpenDrawer,
                         onToggleSearch = { searchActive = true },
-                        onOpenSort = { showSortSheet = true }
+                        onOpenSort = { showSortSheet = true },
+                        showProgress = activeOp != null && !dialogVisible,
+                        progressFraction = if (activeOp != null && activeOp!!.total > 0L) {
+                            (activeOp!!.done.toFloat() / activeOp!!.total.toFloat()).coerceIn(0f, 1f)
+                        } else {
+                            0f
+                        },
+                        progressDeterminate = (activeOp?.total ?: 0L) > 0L,
+                        onShowProgress = vm::showProgressDialog
                     )
                     Breadcrumbs(current = state.currentDir, onNavigate = vm::navigateTo)
                 }
@@ -480,7 +494,7 @@ fun BrowserScreen(
                     val chosenPassword = password
                     val chosenFormat = format
                     showCompressDialog = false
-                    vm.compressSelection(chosenName, chosenFormat, chosenPassword) { r ->
+                    vm.startCompress(context, chosenName, chosenFormat, chosenPassword) { r ->
                         scope.launch {
                             snackbar.showSnackbar(vm.archiveOpMessage(r.exceptionOrNull(), "Archive created", "Compression failed"))
                         }
@@ -511,7 +525,7 @@ fun BrowserScreen(
                 Button(onClick = {
                     val chosenPassword = password
                     pendingExtract = null
-                    vm.extractArchive(file, chosenPassword) { r ->
+                    vm.startExtract(context, file, chosenPassword) { r ->
                         scope.launch {
                             snackbar.showSnackbar(vm.archiveOpMessage(r.exceptionOrNull(), "Extracted", "Extraction failed"))
                         }
@@ -544,7 +558,7 @@ fun BrowserScreen(
             onExtract = {
                 val usedPassword = preview.passwordUsed
                 vm.closePreview()
-                vm.extractArchive(file, usedPassword) { r ->
+                vm.startExtract(context, file, usedPassword) { r ->
                     scope.launch {
                         snackbar.showSnackbar(vm.archiveOpMessage(r.exceptionOrNull(), "Extracted", "Extraction failed"))
                     }
@@ -633,20 +647,55 @@ fun BrowserScreen(
         )
     }
 
-    if (archiveOpActive) {
-        AlertDialog(
-            onDismissRequest = {},
-            title = { Text("Working with archive") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                    Text("Compressing or extracting...")
+    if ((activeOp != null && dialogVisible) || verifyActive) {
+        val op = activeOp
+        if (op != null && dialogVisible) {
+            val hasTotal = op.total > 0L
+            val fraction = if (hasTotal) (op.done.toFloat() / op.total.toFloat()).coerceIn(0f, 1f) else 0f
+            val percent = (fraction * 100).toInt()
+            AlertDialog(
+                onDismissRequest = {},
+                title = { Text(if (op.kind == OpKind.COMPRESS) "Compressing archive" else "Extracting archive") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text(op.label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (hasTotal) {
+                            LinearProgressIndicator(
+                                progress = { fraction },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Text(
+                                Formatter.formatShortFileSize(context, op.done) + " / " +
+                                    Formatter.formatShortFileSize(context, op.total) + " • " + percent + "%"
+                            )
+                        } else {
+                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                            Text("Working...")
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { vm.hideProgressDialog() }) { Text("Hide") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { vm.cancelArchiveOp(context) }) { Text("Cancel") }
                 }
-            },
-            confirmButton = {
-                TextButton(onClick = { vm.cancelArchiveOp() }) { Text("Cancel") }
-            }
-        )
+            )
+        } else {
+            AlertDialog(
+                onDismissRequest = {},
+                title = { Text("Working with archive") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        Text("Verifying archive...")
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { vm.cancelArchiveOp() }) { Text("Cancel") }
+                }
+            )
+        }
     }
 
     createKind?.let { kind ->
@@ -743,7 +792,11 @@ private fun BrowserTopBar(
     onNavigateUp: () -> Unit,
     onOpenDrawer: () -> Unit,
     onToggleSearch: () -> Unit,
-    onOpenSort: () -> Unit
+    onOpenSort: () -> Unit,
+    showProgress: Boolean = false,
+    progressFraction: Float = 0f,
+    progressDeterminate: Boolean = false,
+    onShowProgress: () -> Unit = {}
 ) {
     TopAppBar(
         colors = TopAppBarDefaults.topAppBarColors(
@@ -777,6 +830,25 @@ private fun BrowserTopBar(
             }
         },
         actions = {
+            if (showProgress) {
+                IconButton(
+                    onClick = onShowProgress,
+                    modifier = Modifier.semantics { contentDescription = "Show progress" }
+                ) {
+                    if (progressDeterminate) {
+                        CircularProgressIndicator(
+                            progress = { progressFraction },
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp
+                        )
+                    }
+                }
+            }
             IconButton(onClick = onToggleSearch) { Icon(Icons.Filled.Search, "Search") }
             IconButton(onClick = onOpenSort) { Icon(Icons.Filled.SortByAlpha, "Sort and view") }
         }

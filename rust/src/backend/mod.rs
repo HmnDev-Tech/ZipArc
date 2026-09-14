@@ -14,7 +14,7 @@ use walkdir::WalkDir;
 
 use crate::error::{ArchiveError, Result};
 use crate::format::Format;
-use crate::io_util::{Limits, check_cancelled, log_warn};
+use crate::io_util::{Limits, check_cancelled, log_warn, progress_reset};
 
 /// One file or directory selected for compression.
 #[derive(Debug, Clone)]
@@ -166,6 +166,7 @@ pub fn collect_sources(
             ));
         }
     }
+    progress_reset(total);
     Ok(out)
 }
 

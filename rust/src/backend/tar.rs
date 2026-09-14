@@ -23,8 +23,8 @@ use crate::error::{ArchiveError, Result, classify_io};
 use crate::format::Format;
 use crate::io_util::{
     AtomicFile, LimitState, LimitedReader, Limits, check_cancelled, create_dir_all_checked,
-    create_output_file, finish_bufwriter, log_warn, reject_symlink_ancestors, safe_join,
-    safe_link_target, set_file_mode,
+    create_output_file, finish_bufwriter, log_warn, progress_reset, reject_symlink_ancestors,
+    safe_join, safe_link_target, set_file_mode,
 };
 
 fn add_entry<W: Write>(
@@ -254,6 +254,7 @@ fn extract_entry<R: Read>(
 
 /// Extract a tar (or wrapped tar) into `dest`.
 pub fn extract(archive: &Path, dest: &Path, format: Format, limits: &Limits) -> Result<()> {
+    progress_reset(0);
     std::fs::create_dir_all(dest)?;
     let dest_root = std::fs::canonicalize(dest)?;
     let reader = open_tar_reader(archive, format)?;
@@ -344,6 +345,7 @@ fn test_link_target(entry: &tar::Entry<'_, impl Read>, name: &str) -> Result<()>
 }
 
 pub fn test(archive: &Path, format: Format, limits: &Limits) -> Result<TestReport> {
+    progress_reset(0);
     let reader = open_tar_reader(archive, format)?;
     let mut tar = Archive::new(reader);
     let entries = tar.entries().map_err(ArchiveError::backend)?;

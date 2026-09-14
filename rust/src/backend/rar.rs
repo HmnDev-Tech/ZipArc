@@ -148,6 +148,7 @@ impl<W: Write> Write for BudgetWriter<W> {
             .inner
             .write(&buf[..buf.len().min(remaining as usize)])?;
         self.count += n as u64;
+        crate::io_util::progress_add(n as u64);
         self.since_cancel_check += n as u64;
         let mut shared = self.shared.borrow_mut();
         shared
@@ -293,6 +294,7 @@ fn extract_impl(
     let parsed = open_archive(archive, password, limits)?;
     let mut sizes: HashMap<Vec<u8>, VecDeque<u64>> = HashMap::new();
     let mut members: usize = 0;
+    let mut total: u64 = 0;
     let ratio_state = LimitState::new(limits);
     for member in parsed.members() {
         check_cancelled()?;
@@ -306,6 +308,7 @@ fn extract_impl(
         if member.meta.is_directory {
             continue;
         }
+        total = total.saturating_add(member.meta.unpacked_size);
         let Ok(name) = sanitize_entry_name(&member.meta.name_lossy()) else {
             continue;
         };
@@ -315,6 +318,7 @@ fn extract_impl(
             .or_default()
             .push_back(member.meta.unpacked_size);
     }
+    crate::io_util::progress_reset(total);
     let mut state = LimitState::new(limits);
     let shared = Rc::new(RefCell::new(Shared::default()));
     let mut warnings: Vec<String> = Vec::new();
@@ -509,6 +513,7 @@ pub fn test_with_password(archive: &Path, limits: &Limits, password: &str) -> Re
 }
 
 fn test_impl(archive: &Path, limits: &Limits, password: Option<&[u8]>) -> Result<TestReport> {
+    crate::io_util::progress_reset(0);
     let parsed = open_archive(archive, password, limits)?;
     let mut entries = 0usize;
     let mut total_size = 0u64;

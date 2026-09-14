@@ -648,5 +648,6 @@ object RustBridge {
     @JvmStatic external fun listArchiveDetailedWithPasswordFd(fd: Int, password: String): String
     @JvmStatic external fun testArchiveFd(fd: Int): String
     @JvmStatic external fun testArchiveWithPasswordFd(fd: Int, password: String): String
+    @JvmStatic external fun getProgress(): LongArray
     @JvmStatic external fun cancel()
 }

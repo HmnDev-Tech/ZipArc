@@ -24,6 +24,10 @@ import com.kerneldroid.karchiver.data.isRarArchive
 import com.kerneldroid.karchiver.data.normalizeArchiveName
 import com.kerneldroid.karchiver.data.PreviewListing
 import com.kerneldroid.karchiver.data.RustBridge
+import com.kerneldroid.karchiver.data.archive.ActiveOp
+import com.kerneldroid.karchiver.data.archive.ArchiveOpManager
+import com.kerneldroid.karchiver.data.archive.ArchiveService
+import com.kerneldroid.karchiver.data.archive.OpOutcome
 import com.kerneldroid.karchiver.data.SortBy
 import com.kerneldroid.karchiver.data.TestReport
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -78,8 +82,38 @@ class BrowserViewModel(
     private val _refreshing = MutableStateFlow(false)
     val refreshing: StateFlow<Boolean> = _refreshing
 
-    private val _archiveOpActive = MutableStateFlow(false)
-    val archiveOpActive: StateFlow<Boolean> = _archiveOpActive
+    private val _verifyActive = MutableStateFlow(false)
+    val verifyActive: StateFlow<Boolean> = _verifyActive
+    val archiveOpActive: StateFlow<Boolean> = _verifyActive
+    val archiveOp: StateFlow<ActiveOp?> = ArchiveOpManager.active
+    val progressDialogVisible = MutableStateFlow(true)
+    private var pendingCompletion: ((Result<Unit>) -> Unit)? = null
+
+    init {
+        viewModelScope.launch {
+            ArchiveOpManager.finished.collect { finished ->
+                if (finished != null) {
+                    refresh()
+                    val result = when (val outcome = finished.outcome) {
+                        is OpOutcome.Success -> Result.success(Unit)
+                        is OpOutcome.Cancelled -> Result.failure(Exception("Cancelled"))
+                        is OpOutcome.Failed -> Result.failure(Exception(outcome.message))
+                    }
+                    pendingCompletion?.invoke(result)
+                    pendingCompletion = null
+                    ArchiveOpManager.consumeFinished()
+                }
+            }
+        }
+    }
+
+    fun hideProgressDialog() {
+        progressDialogVisible.value = false
+    }
+
+    fun showProgressDialog() {
+        progressDialogVisible.value = true
+    }
 
     private val _preview = MutableStateFlow(ArchivePreviewUiState())
     val preview: StateFlow<ArchivePreviewUiState> = _preview
@@ -122,7 +156,7 @@ class BrowserViewModel(
         }
         _verify.value = VerifyUiState(file = file, isLoading = true, passwordUsed = password)
         viewModelScope.launch {
-            _archiveOpActive.value = true
+            _verifyActive.value = true
             try {
                 val result = repo.testArchive(file, password.ifEmpty { null }, elevationEngine(), _state.value.elevationMode)
                 result.fold(
@@ -134,7 +168,7 @@ class BrowserViewModel(
                     }
                 )
             } finally {
-                _archiveOpActive.value = false
+                _verifyActive.value = false
             }
         }
     }
@@ -173,6 +207,7 @@ class BrowserViewModel(
             e == null -> successText
             msg.contains("wrong password", ignoreCase = true) -> "Wrong password"
             msg.contains("password required", ignoreCase = true) -> "Password required"
+            msg.contains("another operation", ignoreCase = true) -> "Another operation is in progress"
             msg.contains("cancel", ignoreCase = true) -> "Cancelled"
             else -> failureText
         }
@@ -181,6 +216,13 @@ class BrowserViewModel(
     fun cancelArchiveOp() {
         try {
             RustBridge.cancel()
+        } catch (_: Throwable) {
+        }
+    }
+
+    fun cancelArchiveOp(context: Context) {
+        try {
+            ArchiveService.cancel(context)
         } catch (_: Throwable) {
         }
     }
@@ -390,26 +432,29 @@ class BrowserViewModel(
         }
     }
 
-    fun compressSelection(name: String = "archive.zip", format: CompressFormat = CompressFormat.ZIP, password: String = "", onDone: (Result<Unit>) -> Unit = {}) {
+    fun startCompress(context: Context, name: String = "archive.zip", format: CompressFormat = CompressFormat.ZIP, password: String = "", onDone: (Result<Unit>) -> Unit = {}) {
         val files = selectedFiles(); if (files.isEmpty()) return
         if (format == CompressFormat.RAR && !_state.value.rarWriteEnabled) {
             onDone(Result.failure(RarWriteLockedException()))
             return
         }
-        viewModelScope.launch {
-            _archiveOpActive.value = true
-            try {
-                val safeName = normalizeArchiveName(name, format)
-                val dest = File(_state.value.currentDir, safeName)
-                val r = repo.compress(files, dest, format, password.ifEmpty { null })
-                clearSelection(); refresh(); onDone(r)
-            } finally {
-                _archiveOpActive.value = false
-            }
+        if (ArchiveOpManager.active.value != null || pendingCompletion != null) {
+            onDone(Result.failure(Exception("Another operation is in progress")))
+            return
         }
+        pendingCompletion = onDone
+        progressDialogVisible.value = true
+        val safeName = normalizeArchiveName(name, format)
+        val dest = File(_state.value.currentDir, safeName)
+        clearSelection()
+        ArchiveService.startCompress(context, files, dest, format, password.ifEmpty { null }, _state.value.elevationMode)
     }
 
-    fun extractArchive(file: File, password: String = "", onDone: (Result<Unit>) -> Unit = {}) {
+    fun compressSelection(context: Context, name: String = "archive.zip", format: CompressFormat = CompressFormat.ZIP, password: String = "", onDone: (Result<Unit>) -> Unit = {}) {
+        startCompress(context, name, format, password, onDone)
+    }
+
+    fun startExtract(context: Context, file: File, password: String = "", onDone: (Result<Unit>) -> Unit = {}) {
         if (isRarArchive(file) && !_state.value.rarEnabled) {
             onDone(Result.failure(RarDisabledException()))
             return
@@ -417,16 +462,18 @@ class BrowserViewModel(
         if (!FormatRegistry.isArchive(file.extension)) {
             onDone(Result.failure(IllegalArgumentException("Not archive"))); return
         }
-        viewModelScope.launch {
-            _archiveOpActive.value = true
-            try {
-                val dest = File(file.parentFile, file.nameWithoutExtension)
-                val r = repo.extract(file, dest, password.ifEmpty { null }, elevationEngine(), _state.value.elevationMode)
-                refresh(); onDone(r)
-            } finally {
-                _archiveOpActive.value = false
-            }
+        if (ArchiveOpManager.active.value != null || pendingCompletion != null) {
+            onDone(Result.failure(Exception("Another operation is in progress")))
+            return
         }
+        pendingCompletion = onDone
+        progressDialogVisible.value = true
+        val dest = File(file.parentFile, file.nameWithoutExtension)
+        ArchiveService.startExtract(context, file, dest, password.ifEmpty { null }, _state.value.elevationMode)
+    }
+
+    fun extractArchive(context: Context, file: File, password: String = "", onDone: (Result<Unit>) -> Unit = {}) {
+        startExtract(context, file, password, onDone)
     }
 
     fun chmodFile(file: File, mode: Int, onDone: (Result<Unit>) -> Unit = {}) {

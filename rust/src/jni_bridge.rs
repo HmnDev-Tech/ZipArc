@@ -10,8 +10,8 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 
 use jni::JNIEnv;
-use jni::objects::{JClass, JObject, JObjectArray, JString};
-use jni::sys::jint;
+use jni::objects::{JClass, JLongArray, JObject, JObjectArray, JString};
+use jni::sys::{jint, jlong};
 use serde::Serialize;
 
 use crate::backend;
@@ -249,6 +249,22 @@ pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_cancel(
     _class: JClass,
 ) {
     request_cancel();
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_getProgress<'local>(
+    env: JNIEnv<'local>,
+    _class: JClass<'local>,
+) -> JLongArray<'local> {
+    let (done, total) = crate::io_util::progress_get();
+    let vals = [done as jlong, total as jlong];
+    match env.new_long_array(2) {
+        Ok(arr) => match env.set_long_array_region(&arr, 0, &vals) {
+            Ok(()) => arr,
+            Err(_) => JLongArray::default(),
+        },
+        Err(_) => JLongArray::default(),
+    }
 }
 
 #[unsafe(no_mangle)]

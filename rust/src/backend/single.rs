@@ -20,7 +20,7 @@ use crate::error::{ArchiveError, Result, classify_io};
 use crate::format::Format;
 use crate::io_util::{
     AtomicFile, LimitState, LimitedReader, Limits, check_cancelled, create_output_file,
-    finish_bufwriter, reject_symlink_ancestors, safe_join, set_file_mode,
+    finish_bufwriter, progress_reset, reject_symlink_ancestors, safe_join, set_file_mode,
 };
 
 /// Compress a single regular file as a raw compressed stream.
@@ -55,6 +55,7 @@ pub fn compress(sources: &[PathBuf], dest: &Path, format: Format, limits: &Limit
         .open(af.path())?;
     let mut state = LimitState::new(limits);
     state.begin_entry(&name, Some(md.len()))?;
+    progress_reset(md.len());
     check_cancelled()?;
     let allowance = state.allowance(Some(md.len()));
     let mut limited = LimitedReader::new(BufReader::new(File::open(src)?), allowance);
@@ -129,6 +130,7 @@ fn output_name(archive: &Path) -> Result<String> {
 
 /// Decompress a single stream into `dest`.
 pub fn extract(archive: &Path, dest: &Path, format: Format, limits: &Limits) -> Result<()> {
+    progress_reset(0);
     std::fs::create_dir_all(dest)?;
     let dest_root = std::fs::canonicalize(dest)?;
     let name = output_name(archive)?;
@@ -168,6 +170,7 @@ pub fn list_detailed(archive: &Path, _format: Format) -> Result<PreviewListing> 
 }
 
 pub fn test(archive: &Path, format: Format, limits: &Limits) -> Result<TestReport> {
+    progress_reset(0);
     check_cancelled()?;
     let name = output_name(archive)?;
     let mut state = LimitState::new(limits);

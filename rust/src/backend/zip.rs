@@ -10,8 +10,8 @@ use crate::backend::{PreviewEntry, PreviewListing, TestFailure, TestReport};
 use crate::error::{ArchiveError, Result, classify_io};
 use crate::io_util::{
     AtomicFile, LimitState, LimitedReader, Limits, check_cancelled, create_dir_all_checked,
-    create_output_file, log_warn, reject_symlink_ancestors, safe_join, safe_link_target,
-    set_file_mode,
+    create_output_file, log_warn, progress_reset, reject_symlink_ancestors, safe_join,
+    safe_link_target, set_file_mode,
 };
 use ::zip::read::ZipFile;
 use ::zip::result::ZipError;
@@ -374,6 +374,16 @@ pub fn extract_with_password(
     extract_impl(archive, dest, limits, Some(password))
 }
 
+fn zip_unpacked_total<R: Read + Seek>(zip: &mut ZipArchive<R>) -> u64 {
+    let mut total = 0u64;
+    for i in 0..zip.len() {
+        if let Ok(entry) = zip.by_index_raw(i) {
+            total = total.saturating_add(entry.size());
+        }
+    }
+    total
+}
+
 fn extract_impl(
     archive: &Path,
     dest: &Path,
@@ -385,10 +395,12 @@ fn extract_impl(
     match resolve_split_segments(archive)? {
         None => {
             let mut zip = open_single(archive)?;
+            progress_reset(zip_unpacked_total(&mut zip));
             extract_entries(&mut zip, &dest_root, limits, password)
         }
         Some(segments) => {
             let mut zip = open_split(&segments)?;
+            progress_reset(zip_unpacked_total(&mut zip));
             extract_entries(&mut zip, &dest_root, limits, password)
         }
     }
@@ -568,6 +580,7 @@ pub fn test_with_password(archive: &Path, limits: &Limits, password: &[u8]) -> R
 }
 
 fn test_impl(archive: &Path, limits: &Limits, password: Option<&[u8]>) -> Result<TestReport> {
+    progress_reset(0);
     match resolve_split_segments(archive)? {
         None => {
             let mut zip = open_single(archive)?;

@@ -12,8 +12,8 @@ use crate::backend::{PreviewEntry, PreviewListing, TestFailure, TestReport};
 use crate::error::{ArchiveError, CANCEL_MARKER, LIMIT_MARKER, Result, classify_io};
 use crate::io_util::{
     AtomicFile, CancelReader, LimitState, LimitedReader, Limits, check_cancelled,
-    create_dir_all_checked, create_output_file, is_cancelled, log_warn, reject_symlink_ancestors,
-    safe_join, set_file_mode,
+    create_dir_all_checked, create_output_file, is_cancelled, log_warn, progress_reset,
+    reject_symlink_ancestors, safe_join, set_file_mode,
 };
 
 fn map_err(e: sevenz_rust2::Error) -> ArchiveError {
@@ -247,6 +247,13 @@ fn extract_impl(
     };
     let mut reader =
         ArchiveReader::open(archive, pw).map_err(|e| map_open_err_pw(e, have_password))?;
+    let total = reader
+        .archive()
+        .files
+        .iter()
+        .filter(|f| !f.is_directory())
+        .fold(0u64, |acc, f| acc.saturating_add(f.size()));
+    progress_reset(total);
     let mut state = LimitState::new(limits);
     let mut warnings: Vec<String> = Vec::new();
     let mut fatal: Option<ArchiveError> = None;
@@ -344,6 +351,7 @@ pub fn test_with_password(archive: &Path, limits: &Limits, password: &str) -> Re
 }
 
 fn test_impl(archive: &Path, limits: &Limits, password: Option<&str>) -> Result<TestReport> {
+    progress_reset(0);
     let (pw, have_password) = match password {
         Some(p) => password_of(p),
         None => (Password::empty(), false),
