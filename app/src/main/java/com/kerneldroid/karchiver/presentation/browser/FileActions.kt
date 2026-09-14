@@ -34,7 +34,6 @@ import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.MenuAnchorPosition
 import androidx.compose.material3.MenuDefaults
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
@@ -71,6 +70,7 @@ import kotlinx.coroutines.withContext
 fun FileOverflowMenu(
     expanded: Boolean,
     onDismiss: () -> Unit,
+    single: Boolean,
     onProperties: () -> Unit,
     onShare: () -> Unit,
     onOpenWith: () -> Unit,
@@ -78,34 +78,35 @@ fun FileOverflowMenu(
 ) {
     DropdownMenuPopup(
         expanded = expanded,
-        onDismissRequest = onDismiss,
-        popupPositionProvider = MenuDefaults.rememberDropdownMenuPopupPositionProvider(
-            dropdownMenuAnchorPosition = MenuAnchorPosition.End
-        )
+        onDismissRequest = onDismiss
     ) {
-        DropdownMenuGroup(
-            shapes = MenuDefaults.groupShape(index = 0, count = 2)
-        ) {
-            DropdownMenuItem(
-                text = { Text("Properties") },
-                trailingIcon = { Icon(Icons.Filled.Info, null, Modifier.size(20.dp)) },
-                onClick = { onDismiss(); onProperties() }
-            )
+        if (single) {
+            DropdownMenuGroup(
+                shapes = MenuDefaults.groupShape(index = 0, count = 2)
+            ) {
+                DropdownMenuItem(
+                    text = { Text("Properties") },
+                    trailingIcon = { Icon(Icons.Filled.Info, null, Modifier.size(20.dp)) },
+                    onClick = { onDismiss(); onProperties() }
+                )
+            }
+            Spacer(Modifier.height(3.dp))
         }
-        Spacer(Modifier.height(3.dp))
         DropdownMenuGroup(
-            shapes = MenuDefaults.groupShape(index = 1, count = 2)
+            shapes = MenuDefaults.groupShape(index = if (single) 1 else 0, count = if (single) 2 else 1)
         ) {
             DropdownMenuItem(
                 text = { Text("Share") },
                 trailingIcon = { Icon(Icons.Filled.Share, null, Modifier.size(20.dp)) },
                 onClick = { onDismiss(); onShare() }
             )
-            DropdownMenuItem(
-                text = { Text("Open with") },
-                trailingIcon = { Icon(Icons.Filled.OpenInNew, null, Modifier.size(20.dp)) },
-                onClick = { onDismiss(); onOpenWith() }
-            )
+            if (single) {
+                DropdownMenuItem(
+                    text = { Text("Open with") },
+                    trailingIcon = { Icon(Icons.Filled.OpenInNew, null, Modifier.size(20.dp)) },
+                    onClick = { onDismiss(); onOpenWith() }
+                )
+            }
             DropdownMenuItem(
                 text = { Text("Copy path") },
                 trailingIcon = { Icon(Icons.Filled.ContentCopy, null, Modifier.size(20.dp)) },
@@ -267,19 +268,45 @@ fun OpenWithDialog(
 }
 
 fun shareFile(context: Context, file: File): Result<Unit> = runCatching {
-    if (file.isDirectory) {
+    shareFiles(context, listOf(file)).getOrThrow()
+}
+
+fun shareFiles(context: Context, files: List<File>): Result<Unit> = runCatching {
+    if (files.isEmpty()) error("Nothing to share")
+    if (files.size == 1 && files.first().isDirectory) {
         val intent = Intent(Intent.ACTION_SEND)
             .setType("text/plain")
-            .putExtra(Intent.EXTRA_TEXT, file.absolutePath)
+            .putExtra(Intent.EXTRA_TEXT, files.first().absolutePath)
         context.startActivity(Intent.createChooser(intent, "Share"))
         return@runCatching
     }
-    val uri = FileProvider.getUriForFile(context, "${context.packageName}.provider", file)
-    val intent = Intent(Intent.ACTION_SEND)
-        .setType(context.contentResolver.getType(uri) ?: "*/*")
-        .putExtra(Intent.EXTRA_STREAM, uri)
+    if (files.any { it.isDirectory }) error("Cannot share folders")
+    if (files.size == 1) {
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.provider", files.first())
+        val intent = Intent(Intent.ACTION_SEND)
+            .setType(context.contentResolver.getType(uri) ?: "*/*")
+            .putExtra(Intent.EXTRA_STREAM, uri)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        context.startActivity(Intent.createChooser(intent, "Share"))
+        return@runCatching
+    }
+    val uris = ArrayList(files.map {
+        FileProvider.getUriForFile(context, "${context.packageName}.provider", it)
+    })
+    val intent = Intent(Intent.ACTION_SEND_MULTIPLE)
+        .setType("*/*")
+        .putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
         .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     context.startActivity(Intent.createChooser(intent, "Share"))
+}
+
+fun copyPath(context: Context, file: File) = copyPaths(context, listOf(file))
+
+fun copyPaths(context: Context, files: List<File>) {
+    val clipboard = context.getSystemService(ClipboardManager::class.java)
+    clipboard?.setPrimaryClip(
+        ClipData.newPlainText("paths", files.joinToString("\n") { it.absolutePath })
+    )
 }
 
 suspend fun queryOpenWith(context: Context, file: File, mime: String): List<ResolveInfo> =
@@ -307,11 +334,6 @@ fun launchOpenWith(context: Context, file: File, mime: String, app: ResolveInfo)
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         context.startActivity(intent)
     }
-
-fun copyPath(context: Context, file: File) {
-    val clipboard = context.getSystemService(ClipboardManager::class.java)
-    clipboard?.setPrimaryClip(ClipData.newPlainText("path", file.absolutePath))
-}
 
 @Composable
 private fun PropRow(label: String, value: String) {

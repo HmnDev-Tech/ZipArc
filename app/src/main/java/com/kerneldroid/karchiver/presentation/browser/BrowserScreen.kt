@@ -104,7 +104,7 @@ fun BrowserScreen(
     var showSortSheet by rememberSaveable { mutableStateOf(false) }
     var showCompressDialog by remember { mutableStateOf(false) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
-    var overflowTarget by remember { mutableStateOf<File?>(null) }
+    var showOverflow by remember { mutableStateOf(false) }
     var propsFile by remember { mutableStateOf<File?>(null) }
     var openWithFile by remember { mutableStateOf<File?>(null) }
     var openWithApps by remember { mutableStateOf<List<ResolveInfo>>(emptyList()) }
@@ -213,10 +213,7 @@ fun BrowserScreen(
                 SelectionTopBar(
                     count = state.selected.size,
                     onClose = vm::clearSelection,
-                    onSelectAll = vm::selectAll,
-                    onOpenOverflow = selectedItems.singleOrNull()?.let { single ->
-                        { overflowTarget = single.file }
-                    }
+                    onSelectAll = vm::selectAll
                 )
             } else {
                 Column {
@@ -227,8 +224,7 @@ fun BrowserScreen(
                         onNavigateUp = { vm.navigateUp() },
                         onOpenDrawer = onOpenDrawer,
                         onToggleSearch = { searchActive = true },
-                        onOpenSort = { showSortSheet = true },
-                        onOpenOverflow = { overflowTarget = state.currentDir }
+                        onOpenSort = { showSortSheet = true }
                     )
                     Breadcrumbs(current = state.currentDir, onNavigate = vm::navigateTo)
                 }
@@ -302,6 +298,38 @@ fun BrowserScreen(
                         val target = singleArchive?.file
                         if (target != null && isRarArchive(target) && !rarEnabled) notifyRarDisabled()
                         else pendingExtract = target
+                    },
+                    onOpenOverflow = { showOverflow = true },
+                    overflowContent = {
+                        val files = selectedItems.map { it.file }
+                        val single = files.singleOrNull()
+                        FileOverflowMenu(
+                            expanded = showOverflow,
+                            onDismiss = { showOverflow = false },
+                            single = single != null,
+                            onProperties = { if (single != null) propsFile = single },
+                            onShare = {
+                                shareFiles(context, files).onFailure {
+                                    scope.launch { snackbar.showSnackbar("Cannot share") }
+                                }
+                            },
+                            onOpenWith = {
+                                if (single != null) {
+                                    scope.launch {
+                                        val mime = if (single.isDirectory) "*/*"
+                                        else FormatRegistry.forExtension(single.extension).mime
+                                        openWithApps = queryOpenWith(context, single, mime)
+                                        openWithFile = single
+                                    }
+                                }
+                            },
+                            onCopyPath = {
+                                copyPaths(context, files)
+                                scope.launch {
+                                    snackbar.showSnackbar(if (files.size == 1) "Path copied" else "Paths copied")
+                                }
+                            }
+                        )
                     }
                 )
                 ClipboardFloatingBar(
@@ -324,32 +352,6 @@ fun BrowserScreen(
 
     if (showSortSheet) {
         SortSheet(state = state, vm = vm, onDismiss = { showSortSheet = false })
-    }
-
-    val overflowFile = overflowTarget
-    if (overflowFile != null) {
-        FileOverflowMenu(
-            expanded = true,
-            onDismiss = { overflowTarget = null },
-            onProperties = { propsFile = overflowFile },
-            onShare = {
-                shareFile(context, overflowFile).onFailure {
-                    scope.launch { snackbar.showSnackbar("Cannot share this file") }
-                }
-            },
-            onOpenWith = {
-                scope.launch {
-                    val mime = if (overflowFile.isDirectory) "*/*"
-                    else FormatRegistry.forExtension(overflowFile.extension).mime
-                    openWithApps = queryOpenWith(context, overflowFile, mime)
-                    openWithFile = overflowFile
-                }
-            },
-            onCopyPath = {
-                copyPath(context, overflowFile)
-                scope.launch { snackbar.showSnackbar("Path copied") }
-            }
-        )
     }
 
     propsFile?.let { file ->
@@ -741,8 +743,7 @@ private fun BrowserTopBar(
     onNavigateUp: () -> Unit,
     onOpenDrawer: () -> Unit,
     onToggleSearch: () -> Unit,
-    onOpenSort: () -> Unit,
-    onOpenOverflow: () -> Unit
+    onOpenSort: () -> Unit
 ) {
     TopAppBar(
         colors = TopAppBarDefaults.topAppBarColors(
@@ -778,7 +779,6 @@ private fun BrowserTopBar(
         actions = {
             IconButton(onClick = onToggleSearch) { Icon(Icons.Filled.Search, "Search") }
             IconButton(onClick = onOpenSort) { Icon(Icons.Filled.SortByAlpha, "Sort and view") }
-            IconButton(onClick = onOpenOverflow) { Icon(Icons.Filled.MoreVert, "More actions") }
         }
     )
 }
@@ -821,12 +821,7 @@ private fun SearchTopBar(query: String, onQueryChange: (String) -> Unit, onClose
 }
 
 @Composable
-private fun SelectionTopBar(
-    count: Int,
-    onClose: () -> Unit,
-    onSelectAll: () -> Unit,
-    onOpenOverflow: (() -> Unit)? = null
-) {
+private fun SelectionTopBar(count: Int, onClose: () -> Unit, onSelectAll: () -> Unit) {
     TopAppBar(
         colors = TopAppBarDefaults.topAppBarColors(
             containerColor = Color.Transparent,
@@ -838,9 +833,6 @@ private fun SelectionTopBar(
         title = { Text("Selected: $count", style = MaterialTheme.typography.titleLarge) },
         actions = {
             IconButton(onClick = onSelectAll) { Icon(Icons.Filled.SelectAll, "Select all") }
-            if (onOpenOverflow != null) {
-                IconButton(onClick = onOpenOverflow) { Icon(Icons.Filled.MoreVert, "More actions") }
-            }
         }
     )
 }
@@ -1074,7 +1066,9 @@ private fun SelectionBottomBar(
     onCut: () -> Unit,
     onDelete: () -> Unit,
     onCompress: () -> Unit,
-    onExtract: () -> Unit
+    onExtract: () -> Unit,
+    onOpenOverflow: (() -> Unit)? = null,
+    overflowContent: (@Composable () -> Unit)? = null
 ) {
     AnimatedVisibility(
         visible = visible,
@@ -1098,19 +1092,29 @@ private fun SelectionBottomBar(
                 }
                 IconButton(onClick = onCompress) { Icon(Icons.Filled.Archive, "Compress") }
             },
-            trailingContent = if (canExtract) {
-                {
-                    FilledTonalIconButton(
-                        onClick = onExtract,
-                        colors = IconButtonDefaults.filledTonalIconButtonColors(
-                            containerColor = MaterialTheme.colorScheme.primaryContainer,
-                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                    ) {
-                        Icon(Icons.Filled.FolderOpen, "Extract")
+            trailingContent = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (canExtract) {
+                        FilledTonalIconButton(
+                            onClick = onExtract,
+                            colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        ) {
+                            Icon(Icons.Filled.FolderOpen, "Extract")
+                        }
+                    }
+                    if (onOpenOverflow != null) {
+                        Box {
+                            IconButton(onClick = onOpenOverflow) {
+                                Icon(Icons.Filled.MoreVert, "More actions")
+                            }
+                            overflowContent?.invoke()
+                        }
                     }
                 }
-            } else null
+            }
         )
     }
 }
