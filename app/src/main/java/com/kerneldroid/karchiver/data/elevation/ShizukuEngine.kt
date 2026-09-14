@@ -132,21 +132,8 @@ object ShizukuEngine : ElevatedFS {
         }
     }
 
-    override suspend fun listFiles(dir: File): List<File>? = withContext(Dispatchers.IO) {
-        try {
-            val service = boundService() ?: return@withContext null
-            val entries = try {
-                service.listDir(dir.absolutePath)
-            } catch (_: Exception) {
-                Log.e(TAG, "listFiles failed")
-                dropService()
-                return@withContext null
-            } ?: return@withContext null
-            entries.mapNotNull { decodeEntry(dir, it) }
-        } catch (_: Exception) {
-            Log.e(TAG, "listFiles failed")
-            null
-        }
+    override suspend fun listFiles(dir: File): List<File>? {
+        return listDetailed(dir)?.map { it.file }
     }
 
     override suspend fun deleteRecursively(targets: List<File>): Boolean = withContext(Dispatchers.IO) {
@@ -312,9 +299,35 @@ object ShizukuEngine : ElevatedFS {
         cachedService = null
     }
 
-    private fun decodeEntry(dir: File, encoded: String): File? {
-        val name = encoded.substringBefore('\u0000')
+    private fun decodeEntry(dir: File, encoded: String): ElevatedEntry? {
+        val parts = encoded.split('\u0000')
+        if (parts.size < 5) return null
+        val name = parts[0]
         if (name.isEmpty() || name.contains('/')) return null
-        return File(dir, name)
+        val isDir = parts[1] == "1"
+        return ElevatedEntry(
+            file = File(dir, name),
+            isDirectory = isDir,
+            size = parts[2].toLongOrNull() ?: 0L,
+            modified = parts[3].toLongOrNull() ?: 0L,
+            mode = parts[4].toIntOrNull() ?: 0
+        )
+    }
+
+    override suspend fun listDetailed(dir: File): List<ElevatedEntry>? = withContext(Dispatchers.IO) {
+        try {
+            val service = boundService() ?: return@withContext null
+            val entries = try {
+                service.listDir(dir.absolutePath)
+            } catch (_: Exception) {
+                Log.e(TAG, "listDetailed failed")
+                dropService()
+                return@withContext null
+            } ?: return@withContext null
+            entries.mapNotNull { decodeEntry(dir, it) }
+        } catch (_: Exception) {
+            Log.e(TAG, "listDetailed failed")
+            null
+        }
     }
 }

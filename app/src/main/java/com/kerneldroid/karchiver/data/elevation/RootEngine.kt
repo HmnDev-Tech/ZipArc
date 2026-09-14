@@ -643,6 +643,49 @@ object RootEngine : ElevatedFS {
         return "'" + value.replace("'", "'\\''") + "'"
     }
 
+    override suspend fun listDetailed(dir: File): List<ElevatedEntry>? {
+        return try {
+            if (isFreshNegative()) return null
+            when (val outcome = runInteractive("ls -A1 -p -- ${shellQuote(dir.absolutePath)}")) {
+                is ExecOutcome.Done -> {
+                    if (outcome.exitCode != 0) {
+                        invalidate()
+                        null
+                    } else {
+                        noteSuccess()
+                        parseLsDetailed(dir, outcome.stdout)
+                    }
+                }
+                is ExecOutcome.Missing -> {
+                    noteMissing()
+                    null
+                }
+                is ExecOutcome.Failed -> {
+                    invalidate()
+                    null
+                }
+            }
+        } catch (_: Exception) {
+            Log.e(TAG, "listDetailed failed")
+            null
+        }
+    }
+
+    private fun parseLsDetailed(dir: File, output: String): List<ElevatedEntry> {
+        if (output.isEmpty()) return emptyList()
+        val result = ArrayList<ElevatedEntry>()
+        for (raw in output.split('\n').dropLast(1)) {
+            if (raw.isEmpty()) continue
+            if (raw.contains('\r')) continue
+            if (raw == "." || raw == ".." || raw == "/") continue
+            val isDir = raw.endsWith("/") && raw.length > 1
+            val name = if (isDir) raw.dropLast(1) else raw
+            if (name.isEmpty()) continue
+            result.add(ElevatedEntry(File(dir, name), isDir, 0L, 0L, 0))
+        }
+        return result
+    }
+
     private fun parseLsOutput(dir: File, output: String): List<File> {
         if (output.isEmpty()) return emptyList()
         val lines = output.split('\n')

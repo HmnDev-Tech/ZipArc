@@ -130,7 +130,15 @@ class FileSystemRepository {
     ): List<FileItem> = withContext(Dispatchers.IO) {
         val listed = path.listFiles()
         val raw = listed?.map { FileItem(it) }
-            ?: elevated?.listFiles(path)?.map { FileItem(it) }
+            ?: elevated?.listDetailed(path)?.map { entry ->
+                FileItem(
+                    file = entry.file,
+                    name = entry.file.name,
+                    isDirectory = entry.isDirectory,
+                    size = if (entry.isDirectory) 0 else entry.size,
+                    lastModified = entry.modified
+                )
+            }
             ?: emptyList()
         val key: Comparator<FileItem> = when (sortBy) {
             SortBy.NAME -> compareBy { it.name.lowercase() }
@@ -316,7 +324,7 @@ class FileSystemRepository {
         mode: String
     ): Result<Unit> {
         try {
-            requireCaps(archive, mode)
+            requireCaps(archive, mode, (eng as? ShizukuEngine)?.shizukuUid())
             if (!RustBridge.isLoaded()) error("Native engine required")
             when (eng) {
                 is ShizukuEngine -> {
@@ -394,7 +402,7 @@ class FileSystemRepository {
         mode: String
     ): Result<PreviewListing> {
         return try {
-            requireCaps(archive, mode)
+            requireCaps(archive, mode, (eng as? ShizukuEngine)?.shizukuUid())
             if (!RustBridge.isLoaded()) error("Native engine required")
             val out: PreviewListing = when (eng) {
                 is ShizukuEngine -> {
@@ -465,7 +473,7 @@ class FileSystemRepository {
         mode: String
     ): Result<TestReport> {
         return try {
-            requireCaps(archive, mode)
+            requireCaps(archive, mode, (eng as? ShizukuEngine)?.shizukuUid())
             if (!RustBridge.isLoaded()) error("Native engine required")
             val out: TestReport = when (eng) {
                 is ShizukuEngine -> {

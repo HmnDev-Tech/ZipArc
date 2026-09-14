@@ -18,8 +18,9 @@ fun isShizukuBlocked(path: String): Boolean {
     return SHIZUKU_BLOCKED_PREFIXES.any { absolute.startsWith(it) }
 }
 
-fun requireCaps(path: File, mode: String) {
+fun requireCaps(path: File, mode: String, shizukuUid: Int? = null) {
     if (mode != "shizuku") return
+    if (shizukuUid == 0) return
     if (isShizukuBlocked(path.absolutePath)) {
         error("Shizuku cannot access app-private data (SELinux policy). Use Root.")
     }
