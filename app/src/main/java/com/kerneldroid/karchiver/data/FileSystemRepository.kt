@@ -91,6 +91,19 @@ data class TestFailure(
     val reason: String
 )
 
+data class FileProperties(
+    val name: String,
+    val path: String,
+    val isDir: Boolean,
+    val sizeBytes: Long?,
+    val modified: Long,
+    val mime: String,
+    val modeSymbolic: String?,
+    val modeOctal: Int?,
+    val canModify: Boolean,
+    val elevated: Boolean
+)
+
 data class TestReport(
     val entries: Int,
     val totalSize: Long,
@@ -158,6 +171,59 @@ class FileSystemRepository {
         if (!path.setReadable(mode and 0x124 != 0, ownerOnly)) error("Could not set mode")
         if (!path.setWritable(mode and 0x92 != 0, ownerOnly)) error("Could not set mode")
         if (!path.setExecutable(mode and 0x49 != 0, ownerOnly)) error("Could not set mode")
+    }
+
+    suspend fun loadProperties(file: File, elevated: Boolean = false): FileProperties = withContext(Dispatchers.IO) {
+        val sizeBytes = if (file.isDirectory) dirSizeCapped(file) else file.length().takeIf { file.exists() }
+        var symbolic: String? = null
+        var octal: Int? = null
+        runCatching {
+            val attrs = Files.readAttributes(file.toPath(), java.nio.file.attribute.PosixFileAttributes::class.java)
+            symbolic = java.nio.file.attribute.PosixFilePermissions.toString(attrs.permissions())
+            octal = posixToOctal(attrs.permissions())
+        }
+        FileProperties(
+            name = file.name.ifEmpty { file.absolutePath },
+            path = file.absolutePath,
+            isDir = file.isDirectory,
+            sizeBytes = sizeBytes,
+            modified = file.lastModified(),
+            mime = if (file.isDirectory) "inode/directory" else FormatRegistry.forExtension(file.extension).mime,
+            modeSymbolic = symbolic,
+            modeOctal = octal,
+            canModify = elevated || file.canWrite(),
+            elevated = elevated
+        )
+    }
+
+    private fun dirSizeCapped(root: File, maxEntries: Int = 50_000): Long? {
+        var total = 0L
+        var count = 0
+        val stack = ArrayDeque<File>()
+        stack.add(root)
+        while (stack.isNotEmpty()) {
+            val dir = stack.removeLast()
+            val kids = dir.listFiles() ?: return null
+            for (kid in kids) {
+                if (++count > maxEntries) return null
+                if (kid.isDirectory) stack.add(kid) else total += kid.length()
+            }
+        }
+        return total
+    }
+
+    private fun posixToOctal(perms: Set<java.nio.file.attribute.PosixFilePermission>): Int {
+        var mode = 0
+        if (perms.contains(java.nio.file.attribute.PosixFilePermission.OWNER_READ)) mode += 0x100
+        if (perms.contains(java.nio.file.attribute.PosixFilePermission.OWNER_WRITE)) mode += 0x80
+        if (perms.contains(java.nio.file.attribute.PosixFilePermission.OWNER_EXECUTE)) mode += 0x40
+        if (perms.contains(java.nio.file.attribute.PosixFilePermission.GROUP_READ)) mode += 0x20
+        if (perms.contains(java.nio.file.attribute.PosixFilePermission.GROUP_WRITE)) mode += 0x10
+        if (perms.contains(java.nio.file.attribute.PosixFilePermission.GROUP_EXECUTE)) mode += 0x8
+        if (perms.contains(java.nio.file.attribute.PosixFilePermission.OTHERS_READ)) mode += 0x4
+        if (perms.contains(java.nio.file.attribute.PosixFilePermission.OTHERS_WRITE)) mode += 0x2
+        if (perms.contains(java.nio.file.attribute.PosixFilePermission.OTHERS_EXECUTE)) mode += 0x1
+        return mode
     }
 
     suspend fun createFile(parent: File, name: String): Result<Unit> = withContext(Dispatchers.IO) {

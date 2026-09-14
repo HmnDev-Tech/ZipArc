@@ -7,6 +7,7 @@
 package com.kerneldroid.karchiver.presentation.browser
 
 import android.os.Environment
+import android.content.pm.ResolveInfo
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
@@ -62,6 +63,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.kerneldroid.karchiver.data.CompressFormat
 import com.kerneldroid.karchiver.data.FileItem
 import com.kerneldroid.karchiver.data.FormatRegistry
+import com.kerneldroid.karchiver.data.FileSystemRepository
 import com.kerneldroid.karchiver.data.RAR_DISABLED_MESSAGE
 import com.kerneldroid.karchiver.data.isRarArchive
 import com.kerneldroid.karchiver.data.SortBy
@@ -102,6 +104,10 @@ fun BrowserScreen(
     var showSortSheet by rememberSaveable { mutableStateOf(false) }
     var showCompressDialog by remember { mutableStateOf(false) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
+    var overflowTarget by remember { mutableStateOf<File?>(null) }
+    var propsFile by remember { mutableStateOf<File?>(null) }
+    var openWithFile by remember { mutableStateOf<File?>(null) }
+    var openWithApps by remember { mutableStateOf<List<ResolveInfo>>(emptyList()) }
     var pendingExtract by remember { mutableStateOf<File?>(null) }
     var createKind by remember { mutableStateOf<CreateKind?>(null) }
     val pullRefreshState = rememberPullToRefreshState()
@@ -207,7 +213,10 @@ fun BrowserScreen(
                 SelectionTopBar(
                     count = state.selected.size,
                     onClose = vm::clearSelection,
-                    onSelectAll = vm::selectAll
+                    onSelectAll = vm::selectAll,
+                    onOpenOverflow = selectedItems.singleOrNull()?.let { single ->
+                        { overflowTarget = single.file }
+                    }
                 )
             } else {
                 Column {
@@ -218,7 +227,8 @@ fun BrowserScreen(
                         onNavigateUp = { vm.navigateUp() },
                         onOpenDrawer = onOpenDrawer,
                         onToggleSearch = { searchActive = true },
-                        onOpenSort = { showSortSheet = true }
+                        onOpenSort = { showSortSheet = true },
+                        onOpenOverflow = { overflowTarget = state.currentDir }
                     )
                     Breadcrumbs(current = state.currentDir, onNavigate = vm::navigateTo)
                 }
@@ -314,6 +324,67 @@ fun BrowserScreen(
 
     if (showSortSheet) {
         SortSheet(state = state, vm = vm, onDismiss = { showSortSheet = false })
+    }
+
+    val overflowFile = overflowTarget
+    if (overflowFile != null) {
+        FileOverflowMenu(
+            expanded = true,
+            onDismiss = { overflowTarget = null },
+            onProperties = { propsFile = overflowFile },
+            onShare = {
+                shareFile(context, overflowFile).onFailure {
+                    scope.launch { snackbar.showSnackbar("Cannot share this file") }
+                }
+            },
+            onOpenWith = {
+                scope.launch {
+                    val mime = if (overflowFile.isDirectory) "*/*"
+                    else FormatRegistry.forExtension(overflowFile.extension).mime
+                    openWithApps = queryOpenWith(context, overflowFile, mime)
+                    openWithFile = overflowFile
+                }
+            },
+            onCopyPath = {
+                copyPath(context, overflowFile)
+                scope.launch { snackbar.showSnackbar("Path copied") }
+            }
+        )
+    }
+
+    propsFile?.let { file ->
+        PropertiesSheet(
+            file = file,
+            repo = remember { FileSystemRepository() },
+            elevated = state.elevationMode != "off",
+            onChmod = { mode, onDone ->
+                vm.chmodFile(file, mode) { r ->
+                    scope.launch {
+                        snackbar.showSnackbar(if (r.isSuccess) "Permissions updated" else "Could not set permissions")
+                    }
+                    onDone(r)
+                }
+            },
+            onDismiss = { propsFile = null }
+        )
+    }
+
+    val openWithTarget = openWithFile
+    if (openWithTarget != null) {
+        OpenWithDialog(
+            fileName = openWithTarget.name,
+            apps = openWithApps,
+            packageManager = context.packageManager,
+            onDismiss = { openWithFile = null },
+            onPick = { app ->
+                val mime = if (openWithTarget.isDirectory) "*/*"
+                else FormatRegistry.forExtension(openWithTarget.extension).mime
+                launchOpenWith(context, openWithTarget, mime, app).onFailure {
+                    scope.launch { snackbar.showSnackbar("Cannot open with this app") }
+                }
+                openWithFile = null
+            }
+        )
     }
 
     if (showDeleteConfirm) {
@@ -670,7 +741,8 @@ private fun BrowserTopBar(
     onNavigateUp: () -> Unit,
     onOpenDrawer: () -> Unit,
     onToggleSearch: () -> Unit,
-    onOpenSort: () -> Unit
+    onOpenSort: () -> Unit,
+    onOpenOverflow: () -> Unit
 ) {
     TopAppBar(
         colors = TopAppBarDefaults.topAppBarColors(
@@ -706,6 +778,7 @@ private fun BrowserTopBar(
         actions = {
             IconButton(onClick = onToggleSearch) { Icon(Icons.Filled.Search, "Search") }
             IconButton(onClick = onOpenSort) { Icon(Icons.Filled.SortByAlpha, "Sort and view") }
+            IconButton(onClick = onOpenOverflow) { Icon(Icons.Filled.MoreVert, "More actions") }
         }
     )
 }
@@ -748,7 +821,12 @@ private fun SearchTopBar(query: String, onQueryChange: (String) -> Unit, onClose
 }
 
 @Composable
-private fun SelectionTopBar(count: Int, onClose: () -> Unit, onSelectAll: () -> Unit) {
+private fun SelectionTopBar(
+    count: Int,
+    onClose: () -> Unit,
+    onSelectAll: () -> Unit,
+    onOpenOverflow: (() -> Unit)? = null
+) {
     TopAppBar(
         colors = TopAppBarDefaults.topAppBarColors(
             containerColor = Color.Transparent,
@@ -760,6 +838,9 @@ private fun SelectionTopBar(count: Int, onClose: () -> Unit, onSelectAll: () -> 
         title = { Text("Selected: $count", style = MaterialTheme.typography.titleLarge) },
         actions = {
             IconButton(onClick = onSelectAll) { Icon(Icons.Filled.SelectAll, "Select all") }
+            if (onOpenOverflow != null) {
+                IconButton(onClick = onOpenOverflow) { Icon(Icons.Filled.MoreVert, "More actions") }
+            }
         }
     )
 }
