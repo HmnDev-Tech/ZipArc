@@ -19,6 +19,7 @@ coil = "2.7.0"
 materialKolor = "5.0.0"
 reorderable = "3.1.0"
 coroutines = "1.10.2"
+shizuku = "13.1.5"
 junit = "4.13.2"
 espressoCore = "3.7.0"
 junitExt = "1.3.0"
@@ -47,6 +48,8 @@ reorderable = { module = "sh.calvin.reorderable:reorderable", version.ref = "reo
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version = "1.11.0" }
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
 kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
+shizuku-api = { module = "dev.rikka.shizuku:api", version.ref = "shizuku" }
+shizuku-provider = { module = "dev.rikka.shizuku:provider", version.ref = "shizuku" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitExt" }
 androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }

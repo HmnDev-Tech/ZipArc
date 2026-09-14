@@ -17,6 +17,9 @@ import com.kerneldroid.karchiver.data.RAR_DISABLED_MESSAGE
 import com.kerneldroid.karchiver.data.RarAccessException
 import com.kerneldroid.karchiver.data.RarDisabledException
 import com.kerneldroid.karchiver.data.RarWriteLockedException
+import com.kerneldroid.karchiver.data.elevation.ElevatedFS
+import com.kerneldroid.karchiver.data.elevation.RootEngine
+import com.kerneldroid.karchiver.data.elevation.ShizukuEngine
 import com.kerneldroid.karchiver.data.isRarArchive
 import com.kerneldroid.karchiver.data.normalizeArchiveName
 import com.kerneldroid.karchiver.data.PreviewListing
@@ -58,6 +61,7 @@ data class BrowserUiState(
     val foldersFirst: Boolean = true,
     val rarEnabled: Boolean = false,
     val rarWriteEnabled: Boolean = false,
+    val elevationMode: String = "off",
     val isLoading: Boolean = false,
     val isSelectionMode: Boolean = false
 )
@@ -193,7 +197,8 @@ class BrowserViewModel(
         viewMode: ViewMode = ViewMode.LIST,
         foldersFirst: Boolean = true,
         rarEnabled: Boolean = false,
-        rarWriteEnabled: Boolean = false
+        rarWriteEnabled: Boolean = false,
+        elevationMode: String = "off"
     ) {
         if (initialized) return
         initialized = true
@@ -205,9 +210,22 @@ class BrowserViewModel(
             viewMode = viewMode,
             foldersFirst = foldersFirst,
             rarEnabled = rarEnabled,
-            rarWriteEnabled = rarWriteEnabled
+            rarWriteEnabled = rarWriteEnabled,
+            elevationMode = elevationMode
         )
         refresh()
+    }
+
+    fun setElevationMode(value: String) {
+        if (_state.value.elevationMode == value) return
+        _state.value = _state.value.copy(elevationMode = value)
+        refresh()
+    }
+
+    private fun elevationEngine(): ElevatedFS? = when (_state.value.elevationMode) {
+        "shizuku" -> ShizukuEngine
+        "root" -> RootEngine
+        else -> null
     }
 
     fun setRarEnabled(value: Boolean) {
@@ -239,7 +257,7 @@ class BrowserViewModel(
         _state.value = s.copy(isLoading = true)
         _refreshing.value = true
         viewModelScope.launch {
-            val items = repo.listDir(s.currentDir, s.sortBy, s.ascending, s.foldersFirst)
+            val items = repo.listDir(s.currentDir, s.sortBy, s.ascending, s.foldersFirst, elevationEngine())
                 .asSequence()
                 .filter { !s.hideHidden || !it.name.startsWith(".") }
                 .filter { s.query.isBlank() || it.name.contains(s.query, ignoreCase = true) }
@@ -347,7 +365,7 @@ class BrowserViewModel(
     fun deleteSelection(onDone: (Result<Unit>) -> Unit = {}) {
         val files = selectedFiles(); if (files.isEmpty()) return
         viewModelScope.launch {
-            val r = repo.delete(files)
+            val r = repo.delete(files, elevationEngine())
             clearSelection(); refresh(); onDone(r)
         }
     }
@@ -355,7 +373,7 @@ class BrowserViewModel(
     fun createFolder(name: String, onDone: (Result<Unit>) -> Unit = {}) {
         val trimmed = name.trim(); if (trimmed.isEmpty()) return
         viewModelScope.launch {
-            val r = repo.createDirectory(_state.value.currentDir, trimmed)
+            val r = repo.createDirectory(_state.value.currentDir, trimmed, elevationEngine())
             refresh(); onDone(r)
         }
     }
@@ -404,6 +422,14 @@ class BrowserViewModel(
             } finally {
                 _archiveOpActive.value = false
             }
+        }
+    }
+
+    fun chmodFile(file: File, mode: Int, onDone: (Result<Unit>) -> Unit = {}) {
+        viewModelScope.launch {
+            val r = repo.chmod(file, mode, elevationEngine())
+            refresh()
+            onDone(r)
         }
     }
 

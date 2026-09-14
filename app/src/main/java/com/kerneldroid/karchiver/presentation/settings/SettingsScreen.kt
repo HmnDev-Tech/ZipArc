@@ -2,14 +2,17 @@ package com.kerneldroid.karchiver.presentation.settings
 
 import android.os.Build
 import android.os.SystemClock
+import android.app.Activity
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -23,21 +26,26 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.BrightnessAuto
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Contrast
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.SortByAlpha
 import androidx.compose.material.icons.filled.ViewModule
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonGroupDefaults
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.SegmentedListItem
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.ToggleButton
 import androidx.compose.material3.ToggleButtonDefaults
 import androidx.compose.material3.TopAppBar
@@ -50,10 +58,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.role
@@ -61,10 +72,15 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.kerneldroid.karchiver.data.AppSettings
 import com.kerneldroid.karchiver.data.SettingsRepository
 import com.kerneldroid.karchiver.data.SortBy
 import com.kerneldroid.karchiver.data.ThemeMode
+import com.kerneldroid.karchiver.data.elevation.RootEngine
+import com.kerneldroid.karchiver.data.elevation.RootStatus
+import com.kerneldroid.karchiver.data.elevation.ShizukuEngine
+import com.kerneldroid.karchiver.data.elevation.ShizukuEngine.ShizukuStatus
 import com.kerneldroid.karchiver.presentation.components.RoundedTopScaffold
 import com.kerneldroid.karchiver.presentation.components.detectBarHold
 import kotlinx.coroutines.Job
@@ -110,7 +126,11 @@ fun SettingsScreen(
     BackHandler { onBack() }
     val scope = rememberCoroutineScope()
     val haptics = LocalHapticFeedback.current
+    val activity = LocalContext.current as? Activity
     var rarUnlockAt by remember { mutableLongStateOf(0L) }
+    var showElevationDialog by remember { mutableStateOf(false) }
+    val rootStatus by RootEngine.status.collectAsStateWithLifecycle(initialValue = RootStatus.Unknown)
+    val shizukuStatus by ShizukuEngine.status.collectAsStateWithLifecycle(initialValue = ShizukuStatus.NoBinder)
     val rarInteractions = remember { MutableInteractionSource() }
     var rarUnlockJob by remember { mutableStateOf<Job?>(null) }
     LaunchedEffect(rarInteractions) {
@@ -430,6 +450,31 @@ fun SettingsScreen(
                     }
                 )
             }
+            SectionHeader("Elevation")
+            Column(verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap)) {
+                SegmentedListItem(
+                    onClick = { showElevationDialog = true },
+                    shapes = ListItemDefaults.segmentedShapes(index = 0, count = 1),
+                    colors = ListItemDefaults.segmentedColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                    ),
+                    leadingContent = { Icon(Icons.Filled.Security, null) },
+                    supportingContent = {
+                        Text(
+                            when (settings.elevationMode) {
+                                "shizuku" -> "Shizuku · ${shizukuStatusLabel(shizukuStatus)}"
+                                "root" -> "Root · ${rootStatusLabel(rootStatus)}"
+                                else -> "Off"
+                            }
+                        )
+                    },
+                    trailingContent = {
+                        Icon(Icons.Filled.ChevronRight, null)
+                    }
+                ) {
+                    Text("Elevation")
+                }
+            }
             SectionHeader("Interface")
             Column(verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap)) {
                 SettingSwitch(
@@ -451,6 +496,54 @@ fun SettingsScreen(
             }
         }
     }
+
+    if (showElevationDialog) {
+        AlertDialog(
+            onDismissRequest = { showElevationDialog = false },
+            icon = { Icon(Icons.Filled.Security, null) },
+            title = { Text("Elevation") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    ElevationOption(
+                        selected = settings.elevationMode == "off",
+                        title = "Off",
+                        subtitle = "Never use elevated access.",
+                        onSelect = { scope.launch { repo.setElevationMode("off") } }
+                    )
+                    ElevationOption(
+                        selected = settings.elevationMode == "shizuku",
+                        title = "Shizuku",
+                        subtitle = shizukuStatusLabel(shizukuStatus),
+                        onSelect = { scope.launch { repo.setElevationMode("shizuku") } }
+                    )
+                    ElevationOption(
+                        selected = settings.elevationMode == "root",
+                        title = "Root",
+                        subtitle = rootStatusLabel(rootStatus),
+                        onSelect = { scope.launch { repo.setElevationMode("root") } }
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showElevationDialog = false }) { Text("Close") }
+            },
+            dismissButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    if (settings.elevationMode == "shizuku" && shizukuStatus == ShizukuStatus.PermissionRequired) {
+                        TextButton(
+                            enabled = activity != null,
+                            onClick = {
+                                activity?.let { ShizukuEngine.requestPermission(it) }
+                            }
+                        ) { Text("Request") }
+                    }
+                    if (settings.elevationMode == "root") {
+                        TextButton(onClick = { scope.launch { RootEngine.refresh() } }) { Text("Recheck") }
+                    }
+                }
+            }
+        )
+    }
 }
 
 private fun sortLabel(sort: SortBy): String = when (sort) {
@@ -458,6 +551,46 @@ private fun sortLabel(sort: SortBy): String = when (sort) {
     SortBy.DATE -> "Date"
     SortBy.SIZE -> "Size"
     SortBy.TYPE -> "Type"
+}
+
+private fun rootStatusLabel(status: RootStatus): String = when (status) {
+    RootStatus.Available -> "Root available"
+    RootStatus.Denied -> "Root denied"
+    RootStatus.Unavailable -> "No root"
+    RootStatus.Unknown -> "Checking"
+}
+
+private fun shizukuStatusLabel(status: ShizukuStatus): String = when (status) {
+    ShizukuStatus.Ready -> "Ready"
+    ShizukuStatus.PermissionRequired -> "Permission required"
+    ShizukuStatus.NoBinder -> "Shizuku not running"
+    ShizukuStatus.Unavailable -> "Unavailable"
+}
+
+@Composable
+private fun ElevationOption(
+    selected: Boolean,
+    title: String,
+    subtitle: String,
+    onSelect: () -> Unit
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onSelect)
+            .padding(vertical = 8.dp)
+    ) {
+        RadioButton(selected = selected, onClick = onSelect)
+        Column(modifier = Modifier.padding(start = 12.dp)) {
+            Text(title, style = MaterialTheme.typography.titleSmall)
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
 }
 
 @Composable

@@ -25,7 +25,8 @@ data class AppSettings(
     val foldersFirst: Boolean = true,
     val confirmDelete: Boolean = true,
     val rarEnabled: Boolean = false,
-    val rarWriteEnabled: Boolean = false
+    val rarWriteEnabled: Boolean = false,
+    val elevationMode: String = "off"
 )
 
 class SettingsRepository(private val appContext: Context) {
@@ -47,6 +48,7 @@ class SettingsRepository(private val appContext: Context) {
         val FOLDERS_FIRST = booleanPreferencesKey("folders_first")
         val CONFIRM_DELETE = booleanPreferencesKey("confirm_delete")
         val RAR_ENABLED = booleanPreferencesKey("rar_enabled")
+        val ELEVATION_MODE = stringPreferencesKey("elevation_mode")
         val RAR_WRITE_ENABLED = booleanPreferencesKey("rar_write_enabled")
     }
 
@@ -84,7 +86,8 @@ class SettingsRepository(private val appContext: Context) {
             foldersFirst = p[Keys.FOLDERS_FIRST] ?: true,
             confirmDelete = p[Keys.CONFIRM_DELETE] ?: true,
             rarEnabled = p[Keys.RAR_ENABLED] ?: false,
-            rarWriteEnabled = p[Keys.RAR_WRITE_ENABLED] ?: false
+            rarWriteEnabled = p[Keys.RAR_WRITE_ENABLED] ?: false,
+            elevationMode = p[Keys.ELEVATION_MODE] ?: "off"
         )
     }
 
@@ -134,4 +137,7 @@ class SettingsRepository(private val appContext: Context) {
             it[Keys.RAR_WRITE_ENABLED] = value
             if (value) it[Keys.RAR_ENABLED] = true
         }
+
+    suspend fun setElevationMode(value: String) =
+        appContext.dataStore.edit { it[Keys.ELEVATION_MODE] = value }
 }

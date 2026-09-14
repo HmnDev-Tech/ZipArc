@@ -5,6 +5,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
+import com.kerneldroid.karchiver.data.elevation.ElevatedFS
 
 data class FileItem(
     val file: File,
@@ -105,9 +106,13 @@ class FileSystemRepository {
         path: File,
         sortBy: SortBy = SortBy.NAME,
         ascending: Boolean = true,
-        foldersFirst: Boolean = true
+        foldersFirst: Boolean = true,
+        elevated: ElevatedFS? = null
     ): List<FileItem> = withContext(Dispatchers.IO) {
-        val raw = path.listFiles()?.map { FileItem(it) } ?: emptyList()
+        val listed = path.listFiles()
+        val raw = listed?.map { FileItem(it) }
+            ?: elevated?.listFiles(path)?.map { FileItem(it) }
+            ?: emptyList()
         val key: Comparator<FileItem> = when (sortBy) {
             SortBy.NAME -> compareBy { it.name.lowercase() }
             SortBy.DATE -> compareBy { it.lastModified }
@@ -119,16 +124,40 @@ class FileSystemRepository {
         if (ascending) sorted else sorted.reversed()
     }
 
-    suspend fun delete(files: List<File>): Result<Unit> = withContext(Dispatchers.IO) {
-        runCatching { files.forEach { if (it.isDirectory) it.deleteRecursively() else it.delete() } }
+    suspend fun delete(files: List<File>, elevated: ElevatedFS? = null): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            val failed = files.filter { it.exists() && !deleteSingle(it) }
+            if (failed.isEmpty()) return@runCatching
+            if (elevated == null || !elevated.deleteRecursively(failed)) error("Delete failed")
+        }
     }
 
-    suspend fun createDirectory(parent: File, name: String): Result<Unit> = withContext(Dispatchers.IO) {
+    private fun deleteSingle(file: File): Boolean =
+        if (file.isDirectory) file.deleteRecursively() else file.delete()
+
+    suspend fun createDirectory(parent: File, name: String, elevated: ElevatedFS? = null): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
             val dir = File(parent, name)
             if (dir.exists()) error("Already exists")
             if (!dir.mkdirs()) error("Could not create directory")
+        }.recoverCatching {
+            if (elevated == null) throw it
+            if (!elevated.mkdirs(File(parent, name))) error("Could not create directory")
         }
+    }
+
+    suspend fun chmod(path: File, mode: Int, elevated: ElevatedFS? = null): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            if (elevated != null && elevated.chmod(path, mode)) return@runCatching
+            applyModeBits(path, mode)
+        }
+    }
+
+    private fun applyModeBits(path: File, mode: Int) {
+        val ownerOnly = false
+        if (!path.setReadable(mode and 0x124 != 0, ownerOnly)) error("Could not set mode")
+        if (!path.setWritable(mode and 0x92 != 0, ownerOnly)) error("Could not set mode")
+        if (!path.setExecutable(mode and 0x49 != 0, ownerOnly)) error("Could not set mode")
     }
 
     suspend fun createFile(parent: File, name: String): Result<Unit> = withContext(Dispatchers.IO) {
