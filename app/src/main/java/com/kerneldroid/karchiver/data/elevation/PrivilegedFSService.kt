@@ -8,6 +8,8 @@ import java.nio.file.Files
 class PrivilegedFSService : IPrivilegedFS.Stub() {
 
     companion object {
+        const val VERSION: Int = 2
+
         private const val FAILURE = 1
         private const val SUCCESS = 0
         private const val FIELD_SEPARATOR = '\u0000'
@@ -78,7 +80,15 @@ class PrivilegedFSService : IPrivilegedFS.Stub() {
                 1 -> ParcelFileDescriptor.MODE_READ_WRITE
                 else -> return null
             }
-            return ParcelFileDescriptor.open(file, modeFlags)
+            val pfd = ParcelFileDescriptor.open(file, modeFlags)
+            if (pfd.fd <= 0) {
+                try {
+                    pfd.close()
+                } catch (_: Throwable) {
+                }
+                return null
+            }
+            return pfd
         } catch (_: Throwable) {
             return null
         }

@@ -37,6 +37,7 @@ import com.kerneldroid.karchiver.data.TestReport
 import com.kerneldroid.karchiver.data.storage.AppVolume
 import com.kerneldroid.karchiver.data.storage.SafBridge
 import com.kerneldroid.karchiver.data.storage.SafGrants
+import com.kerneldroid.karchiver.data.storage.VolumeMonitor
 import com.kerneldroid.karchiver.data.storage.loadAppVolumes
 import com.kerneldroid.karchiver.presentation.storage.deepestVolumeFor
 import kotlinx.coroutines.Job
@@ -262,6 +263,7 @@ class BrowserViewModel(
 
     val volumes = MutableStateFlow<List<AppVolume>>(emptyList())
 
+    private var volumeMonitor: VolumeMonitor? = null
     private var appCtx: Context? = null
     private var safHelper: SafGrants? = null
 
@@ -306,10 +308,19 @@ class BrowserViewModel(
             rarWriteEnabled = rarWriteEnabled,
             elevationMode = elevationMode
         )
-        viewModelScope.launch {
-            volumes.value = loadAppVolumes(ctx)
-            repo.safVolumes = volumes.value
+        volumeMonitor?.stop()
+        volumeMonitor = VolumeMonitor(ctx) { newVolumes ->
+            volumes.value = newVolumes
+            repo.safVolumes = newVolumes
+            try {
+                val current = _state.value.currentDir
+                if (!current.exists()) {
+                    navigateTo(deepestVolumeFor(current, newVolumes)?.root ?: rootDir)
+                }
+            } catch (_: Exception) {
+            }
         }
+        volumeMonitor?.start()
         val grants = SafGrants(ctx)
         safHelper = grants
         repo.safBridge = SafBridge(ctx, grants)
@@ -642,5 +653,11 @@ class BrowserViewModel(
             }
             try { context.startActivity(Intent.createChooser(fallback, file.name)) } catch (_: Exception) {}
         }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        volumeMonitor?.stop()
+        volumeMonitor = null
     }
 }

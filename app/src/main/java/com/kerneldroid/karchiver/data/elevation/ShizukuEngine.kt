@@ -35,9 +35,12 @@ object ShizukuEngine : ElevatedFS {
 
     private const val TAG = "ShizukuEngine"
     private const val PERMISSION_REQUEST_CODE = 9917
-    private const val BIND_TIMEOUT_MS = 10_000L
+    private const val BIND_TIMEOUT_MS = 5_000L
     private const val USER_SERVICE_TAG = "karchiver-privileged-fs-v1"
+    private const val USER_SERVICE_PROCESS_TAG = "privileged-fs"
     private const val SUCCESS = 0
+    private const val SHELL_UID = 2000
+    private const val ROOT_UID = 0
 
     private val _status = MutableStateFlow<ShizukuStatus>(ShizukuStatus.NoBinder)
     val status: StateFlow<ShizukuStatus> = _status.asStateFlow()
@@ -52,6 +55,12 @@ object ShizukuEngine : ElevatedFS {
     @Volatile
     private var cachedService: IPrivilegedFS? = null
 
+    @Volatile
+    private var activeArgs: Shizuku.UserServiceArgs? = null
+
+    @Volatile
+    private var activeConnection: ServiceConnection? = null
+
     fun init(context: Context) {
         appContext = context.applicationContext
         if (listenersRegistered.compareAndSet(false, true)) {
@@ -60,8 +69,11 @@ object ShizukuEngine : ElevatedFS {
                     scope.launch { refresh() }
                 }
                 Shizuku.addBinderDeadListener {
-                    cachedService = null
-                    _status.value = ShizukuStatus.NoBinder
+                    scope.launch {
+                        cachedService = null
+                        unbindActive()
+                        _status.value = ShizukuStatus.NoBinder
+                    }
                 }
                 Shizuku.addRequestPermissionResultListener { requestCode, _ ->
                     if (requestCode == PERMISSION_REQUEST_CODE) {
@@ -81,6 +93,18 @@ object ShizukuEngine : ElevatedFS {
         _status.value = withContext(Dispatchers.IO) { probeStatus() }
     }
 
+    suspend fun preflight(): ShizukuStatus {
+        val result = withContext(Dispatchers.IO) { preflightStatus() }
+        _status.value = result
+        return result
+    }
+
+    fun statusNow(): ShizukuStatus {
+        val result = probeStatus()
+        _status.value = result
+        return result
+    }
+
     private fun probeStatus(): ShizukuStatus {
         return try {
             if (!Shizuku.pingBinder()) return ShizukuStatus.NoBinder
@@ -92,6 +116,35 @@ object ShizukuEngine : ElevatedFS {
             Log.e(TAG, "status probe failed")
             ShizukuStatus.Unavailable
         }
+    }
+
+    private fun preflightStatus(): ShizukuStatus {
+        return try {
+            if (!Shizuku.pingBinder()) return ShizukuStatus.NoBinder
+            if (Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
+                return ShizukuStatus.PermissionRequired
+            }
+            val uid = try {
+                Shizuku.getUid()
+            } catch (_: Exception) {
+                Log.e(TAG, "preflight uid probe failed")
+                return ShizukuStatus.Unavailable
+            }
+            if (uid != ROOT_UID && uid != SHELL_UID) {
+                Log.e(TAG, "preflight unexpected uid")
+                return ShizukuStatus.Unavailable
+            }
+            ShizukuStatus.Ready
+        } catch (_: Exception) {
+            Log.e(TAG, "preflight failed")
+            ShizukuStatus.Unavailable
+        }
+    }
+
+    private suspend fun ensureReady(): Boolean {
+        val result = withContext(Dispatchers.IO) { preflightStatus() }
+        _status.value = result
+        return result == ShizukuStatus.Ready
     }
 
     fun requestPermission(activity: Activity) {
@@ -138,6 +191,7 @@ object ShizukuEngine : ElevatedFS {
 
     override suspend fun deleteRecursively(targets: List<File>): Boolean = withContext(Dispatchers.IO) {
         if (targets.isEmpty()) return@withContext true
+        if (!ensureReady()) return@withContext false
         try {
             val service = boundService() ?: return@withContext false
             try {
@@ -154,6 +208,7 @@ object ShizukuEngine : ElevatedFS {
     }
 
     override suspend fun mkdirs(dir: File): Boolean = withContext(Dispatchers.IO) {
+        if (!ensureReady()) return@withContext false
         try {
             val service = boundService() ?: return@withContext false
             try {
@@ -171,6 +226,7 @@ object ShizukuEngine : ElevatedFS {
 
     override suspend fun chmod(path: File, mode: Int): Boolean = withContext(Dispatchers.IO) {
         if (mode < 0) return@withContext false
+        if (!ensureReady()) return@withContext false
         try {
             val service = boundService() ?: return@withContext false
             try {
@@ -187,10 +243,11 @@ object ShizukuEngine : ElevatedFS {
     }
 
     override suspend fun openReadFd(path: String): ParcelFileDescriptor? = withContext(Dispatchers.IO) {
+        if (!ensureReady()) return@withContext null
         try {
             val service = boundService() ?: return@withContext null
             try {
-                service.openFile(path, 0)
+                validateFd(service.openFile(path, 0))
             } catch (_: Exception) {
                 Log.e(TAG, "openReadFd failed")
                 dropService()
@@ -203,10 +260,11 @@ object ShizukuEngine : ElevatedFS {
     }
 
     override suspend fun openWriteFd(path: String): ParcelFileDescriptor? = withContext(Dispatchers.IO) {
+        if (!ensureReady()) return@withContext null
         try {
             val service = boundService() ?: return@withContext null
             try {
-                service.openFile(path, 1)
+                validateFd(service.openFile(path, 1))
             } catch (_: Exception) {
                 Log.e(TAG, "openWriteFd failed")
                 dropService()
@@ -216,6 +274,18 @@ object ShizukuEngine : ElevatedFS {
             Log.e(TAG, "openWriteFd failed")
             null
         }
+    }
+
+    private fun validateFd(pfd: ParcelFileDescriptor?): ParcelFileDescriptor? {
+        if (pfd == null) return null
+        if (pfd.fd <= 0) {
+            try {
+                pfd.close()
+            } catch (_: Exception) {
+            }
+            return null
+        }
+        return pfd
     }
 
     private suspend fun boundService(): IPrivilegedFS? {
@@ -250,7 +320,11 @@ object ShizukuEngine : ElevatedFS {
         }
         val ready = CompletableDeferred<IPrivilegedFS>()
         val component = ComponentName(context, PrivilegedFSService::class.java)
-        val args = Shizuku.UserServiceArgs(component).daemon(false).tag(USER_SERVICE_TAG)
+        val args = Shizuku.UserServiceArgs(component)
+            .daemon(false)
+            .tag(USER_SERVICE_TAG)
+            .version(PrivilegedFSService.VERSION)
+            .processNameSuffix(USER_SERVICE_PROCESS_TAG)
         val connection =
             object : ServiceConnection {
                 override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
@@ -265,11 +339,29 @@ object ShizukuEngine : ElevatedFS {
                     cachedService = null
                     scope.launch { refresh() }
                 }
+
+                override fun onBindingDied(name: ComponentName?) {
+                    cachedService = null
+                    unbindActive()
+                    scope.launch {
+                        _status.value = ShizukuStatus.NoBinder
+                        refresh()
+                    }
+                }
+
+                override fun onNullBinding(name: ComponentName?) {
+                    cachedService = null
+                    ready.completeExceptionally(IllegalStateException("Privileged service null binding"))
+                }
             }
+        activeArgs = args
+        activeConnection = connection
         try {
             Shizuku.bindUserService(args, connection)
         } catch (_: Exception) {
             Log.e(TAG, "user service bind failed")
+            activeArgs = null
+            activeConnection = null
             _status.value = ShizukuStatus.Unavailable
             return@withContext null
         }
@@ -288,11 +380,27 @@ object ShizukuEngine : ElevatedFS {
             } catch (_: Exception) {
                 Log.e(TAG, "user service unbind failed")
             }
+            activeArgs = null
+            activeConnection = null
+            cachedService = null
+            _status.value = ShizukuStatus.Unavailable
             return@withContext null
         }
         cachedService = bound
         _status.value = ShizukuStatus.Ready
         bound
+    }
+
+    private fun unbindActive() {
+        val args = activeArgs ?: return
+        val connection = activeConnection ?: return
+        try {
+            Shizuku.unbindUserService(args, connection, true)
+        } catch (_: Exception) {
+            Log.e(TAG, "user service unbind failed")
+        }
+        activeArgs = null
+        activeConnection = null
     }
 
     private fun dropService() {
@@ -315,6 +423,7 @@ object ShizukuEngine : ElevatedFS {
     }
 
     override suspend fun listDetailed(dir: File): List<ElevatedEntry>? = withContext(Dispatchers.IO) {
+        if (!ensureReady()) return@withContext null
         try {
             val service = boundService() ?: return@withContext null
             val entries = try {

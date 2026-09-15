@@ -154,43 +154,56 @@ class SafBridge(private val context: Context, private val grants: SafGrants) {
         }
     }
 
-    suspend fun stageExtractOut(stagedDir: File, destDir: File, volumes: List<AppVolume>): Boolean =
+    suspend fun copyStagedOut(stagedDir: File, destDir: File, volumes: List<AppVolume>): Boolean =
         withContext(Dispatchers.IO) {
             try {
-                if (destDir.canWrite()) return@withContext true
-                val binding = bindingFor(destDir, volumes) ?: return@withContext true
-                if (!stagedDir.isDirectory || !stagedDir.canRead()) return@withContext true
-                val kids = stagedDir.listFiles() ?: return@withContext true
+                if (!stagedDir.isDirectory || !stagedDir.canRead()) return@withContext false
+                val binding = bindingFor(destDir, volumes) ?: return@withContext false
+                val kids = stagedDir.listFiles() ?: return@withContext false
                 for (kid in kids) {
                     if (!SafFs.copyIn(appContext, binding.second, binding.third, kid)) {
-                        return@withContext true
+                        return@withContext false
                     }
                 }
-                false
-            } catch (_: Exception) {
                 true
+            } catch (_: Exception) {
+                false
+            }
+        }
+
+    suspend fun readBindingFor(file: File, volumes: List<AppVolume>): Triple<AppVolume, Uri, String>? {
+        return bindingFor(file, volumes)
+    }
+
+    suspend fun openReadFdFor(file: File, volumes: List<AppVolume>): android.os.ParcelFileDescriptor? =
+        withContext(Dispatchers.IO) {
+            try {
+                val binding = bindingFor(file, volumes) ?: return@withContext null
+                if (binding.third.isEmpty()) return@withContext null
+                SafFs.openReadPfd(appContext, binding.second, binding.third)
+            } catch (_: Exception) {
+                null
             }
         }
 
     private suspend fun bindingFor(file: File, volumes: List<AppVolume>): Triple<AppVolume, Uri, String>? {
         return try {
-            val volumeId = grants.volumeIdFor(file, volumes) ?: return null
-            val volume = volumes.firstOrNull { it.id == volumeId } ?: return null
-            val treeUri = grants.grantFor(volumeId) ?: return null
-            val rel = relativeToVolume(file, volume) ?: return null
-            Triple(volume, treeUri, rel)
+            val binding = grants.bindingForFile(file, volumes) ?: return null
+            val base = binding.baseDir
+            val rel = relativeTo(file, base) ?: return null
+            Triple(binding.volume, binding.treeUri, rel)
         } catch (_: Exception) {
             null
         }
     }
 
-    private fun relativeToVolume(file: File, volume: AppVolume): String? {
+    private fun relativeTo(file: File, base: File): String? {
         return try {
-            val root = try { volume.root.canonicalPath } catch (_: Exception) { volume.root.absolutePath }
+            val root = try { base.canonicalPath } catch (_: Exception) { base.absolutePath }
             val target = try { file.canonicalPath } catch (_: Exception) { file.absolutePath }
-            val base = root.trimEnd('/')
-            if (target == base) "" else if (target.startsWith(base + "/")) {
-                target.substring(base.length + 1)
+            val clean = root.trimEnd('/')
+            if (target == clean) "" else if (target.startsWith(clean + "/")) {
+                target.substring(clean.length + 1)
             } else {
                 null
             }

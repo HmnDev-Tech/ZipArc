@@ -91,6 +91,7 @@ import com.kerneldroid.karchiver.data.elevation.ShizukuEngine.ShizukuStatus
 import com.kerneldroid.karchiver.presentation.components.RoundedTopScaffold
 import com.kerneldroid.karchiver.presentation.components.detectBarHold
 import com.kerneldroid.karchiver.data.storage.AppVolume
+import com.kerneldroid.karchiver.data.storage.VolumeKind
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -659,8 +660,8 @@ private fun StorageSection(
         val volume = volumes.firstOrNull { it.id == volumeId }
         return when {
             volume == null -> Icons.Filled.SdStorage
-            !volume.isRemovable -> Icons.Filled.Smartphone
-            volume.label.contains("usb", ignoreCase = true) -> Icons.Filled.Usb
+            volume.isPrimary -> Icons.Filled.Smartphone
+            volume.kind == VolumeKind.USB -> Icons.Filled.Usb
             else -> Icons.Filled.SdStorage
         }
     }

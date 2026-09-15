@@ -177,6 +177,7 @@ fn extract_entry<R: Read>(
     entry: &mut tar::Entry<'_, R>,
     root: &Path,
     state: &mut LimitState,
+    filter: Option<&[String]>,
 ) -> Result<()> {
     check_cancelled()?;
     let entry_type = entry.header().entry_type();
@@ -184,6 +185,10 @@ fn extract_entry<R: Read>(
         .path()
         .map(|p| p.to_string_lossy().into_owned())
         .map_err(ArchiveError::backend)?;
+
+    if filter.is_some_and(|f| !crate::backend::filter_matches(&name, f)) {
+        return Ok(());
+    }
 
     if entry_type == EntryType::Directory {
         let out = safe_join(root, &name)?;
@@ -254,6 +259,30 @@ fn extract_entry<R: Read>(
 
 /// Extract a tar (or wrapped tar) into `dest`.
 pub fn extract(archive: &Path, dest: &Path, format: Format, limits: &Limits) -> Result<()> {
+    extract_impl(archive, dest, format, limits, None)
+}
+
+pub fn extract_filtered(
+    archive: &Path,
+    dest: &Path,
+    format: Format,
+    limits: &Limits,
+    names: &[String],
+) -> Result<()> {
+    let filters = crate::backend::normalize_filter_names(names)?;
+    if filters.is_empty() {
+        return Ok(());
+    }
+    extract_impl(archive, dest, format, limits, Some(&filters))
+}
+
+fn extract_impl(
+    archive: &Path,
+    dest: &Path,
+    format: Format,
+    limits: &Limits,
+    filter: Option<&[String]>,
+) -> Result<()> {
     progress_reset(0);
     std::fs::create_dir_all(dest)?;
     let dest_root = std::fs::canonicalize(dest)?;
@@ -272,7 +301,7 @@ pub fn extract(archive: &Path, dest: &Path, format: Format, limits: &Limits) -> 
                 continue;
             }
         };
-        let result = extract_entry(&mut entry, &dest_root, &mut state);
+        let result = extract_entry(&mut entry, &dest_root, &mut state, filter);
         match result {
             Ok(()) => {}
             Err(e) if e.is_fatal() => return Err(e),
@@ -935,5 +964,47 @@ mod edit_tests {
             b"pw",
         );
         assert!(matches!(r, Err(ArchiveError::Unsupported(_))));
+    }
+
+    #[test]
+    fn extract_filtered_single_file() {
+        let dir = tempdir().unwrap();
+        let archive = make_tar(dir.path());
+        let out = dir.path().join("out");
+        crate::backend::extract_filtered(&archive, Format::Tar, &["src/a.txt".to_string()], &out)
+            .unwrap();
+        assert!(out.join("src/a.txt").is_file());
+        assert!(!out.join("src/mydir/b.txt").exists());
+    }
+
+    #[test]
+    fn extract_filtered_dir_subtree() {
+        let dir = tempdir().unwrap();
+        let archive = make_tar(dir.path());
+        let out = dir.path().join("out");
+        crate::backend::extract_filtered(&archive, Format::Tar, &["src/mydir/".to_string()], &out)
+            .unwrap();
+        assert!(out.join("src/mydir/b.txt").is_file());
+        assert!(out.join("src/mydir/sub/c.txt").is_file());
+        assert!(!out.join("src/a.txt").exists());
+    }
+
+    #[test]
+    fn extract_filtered_empty_is_noop() {
+        let dir = tempdir().unwrap();
+        let archive = make_tar(dir.path());
+        let out = dir.path().join("out");
+        crate::backend::extract_filtered(&archive, Format::Tar, &[], &out).unwrap();
+        assert!(!out.exists() || out.read_dir().unwrap().next().is_none());
+    }
+
+    #[test]
+    fn extract_filtered_rejects_parent_dir() {
+        let dir = tempdir().unwrap();
+        let archive = make_tar(dir.path());
+        let out = dir.path().join("out");
+        let r =
+            crate::backend::extract_filtered(&archive, Format::Tar, &["../evil".to_string()], &out);
+        assert!(matches!(r, Err(ArchiveError::Invalid(_))));
     }
 }

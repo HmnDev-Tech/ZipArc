@@ -10,10 +10,13 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
+import android.os.SystemClock
 import android.text.format.Formatter
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.kerneldroid.karchiver.MainActivity
+import com.kerneldroid.karchiver.R
 import com.kerneldroid.karchiver.data.CompressFormat
 import com.kerneldroid.karchiver.data.FileSystemRepository
 import com.kerneldroid.karchiver.data.RustBridge
@@ -43,7 +46,9 @@ class ArchiveService : Service() {
         const val EXTRA_PASSWORD = "extra_password"
         const val EXTRA_ELEVATION = "extra_elevation"
         const val CHANNEL_ID = "archive_ops"
+        const val DONE_CHANNEL_ID = "archive_done"
         const val NOTIFICATION_ID = 1
+        private const val STALL_TIMEOUT_MS = 5L * 60L * 1000L
 
         fun startCompress(
             context: Context,
@@ -95,6 +100,12 @@ class ArchiveService : Service() {
     private var owned = false
     private var ownedKind: OpKind = OpKind.COMPRESS
     private var ownedLabel: String = ""
+    private var wakeLock: PowerManager.WakeLock? = null
+    private val speedWindow = ArrayDeque<Pair<Long, Long>>()
+    private var stalledDetected = false
+    private var stallSinceElapsed = 0L
+    private var stallLastDone = 0L
+    private var stallLastTotal = 0L
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -154,7 +165,13 @@ class ArchiveService : Service() {
         ownedLabel = label
         ArchiveOpManager.started(kind, label)
         ensureChannel()
-        val initial = buildProgressNotification(label, 0L, 0L)
+        stalledDetected = false
+        speedWindow.clear()
+        stallSinceElapsed = SystemClock.elapsedRealtime()
+        stallLastDone = 0L
+        stallLastTotal = 0L
+        acquireWakeLock()
+        val initial = buildProgressNotification(label, 0L, 0L, null, null)
         ServiceCompat.startForeground(
             this,
             NOTIFICATION_ID,
@@ -166,46 +183,133 @@ class ArchiveService : Service() {
         val capturedDest = destStr
         val capturedFormat = formatName
         scopeJob = scope.launch {
-            val progressJob = launch {
-                while (isActive) {
-                    delay(250)
-                    val current = readProgress()
-                    ArchiveOpManager.progress(current.first, current.second)
-                    val updated = buildProgressNotification(label, current.first, current.second)
-                    try {
-                        val manager =
-                            getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                        manager.notify(NOTIFICATION_ID, updated)
-                    } catch (_: Exception) {
-                    }
+            try {
+                runOp(
+                    kind,
+                    capturedSrcs,
+                    capturedArchive,
+                    capturedDest,
+                    capturedFormat,
+                    password,
+                    elevationMode,
+                    label
+                )
+            } finally {
+                releaseWakeLock()
+            }
+        }
+        return START_REDELIVER_INTENT
+    }
+
+    private suspend fun CoroutineScope.runOp(
+        kind: OpKind,
+        srcPaths: List<String>?,
+        archiveStr: String?,
+        destStr: String?,
+        formatName: String?,
+        password: String?,
+        elevationMode: String,
+        label: String
+    ) {
+        val progressJob = launch {
+            while (isActive) {
+                delay(250)
+                val current = readProgress()
+                ArchiveOpManager.progress(current.first, current.second)
+                val now = SystemClock.elapsedRealtime()
+                if (current.first != stallLastDone || current.second != stallLastTotal) {
+                    stallSinceElapsed = now
+                    stallLastDone = current.first
+                    stallLastTotal = current.second
+                } else if (now - stallSinceElapsed >= STALL_TIMEOUT_MS) {
+                    stalledDetected = true
+                    cancelCurrent()
+                    break
+                }
+                val speed = if (current.second > 0L) recordSample(current.first) else null
+                val speedText = if (speed != null && speed > 0.0) {
+                    formatSpeed(speed)
+                } else {
+                    null
+                }
+                val etaText = formatEta(current.second, current.first, speed)
+                val updated = buildProgressNotification(label, current.first, current.second, speedText, etaText)
+                try {
+                    val manager =
+                        getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                    manager.notify(NOTIFICATION_ID, updated)
+                } catch (_: Exception) {
                 }
             }
-            val outcome = executeOp(
-                kind,
-                capturedSrcs,
-                capturedArchive,
-                capturedDest,
-                capturedFormat,
-                password,
-                elevationMode
-            )
-            progressJob.cancel()
-            ArchiveOpManager.finished(kind, label, outcome)
-            val done = buildCompletionNotification(label, outcome)
-            try {
-                ServiceCompat.stopForeground(this@ArchiveService, STOP_FOREGROUND_DETACH)
-            } catch (_: Exception) {
-            }
-            try {
-                val manager =
-                    getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                manager.notify(NOTIFICATION_ID, done)
-            } catch (_: Exception) {
-            }
-            owned = false
-            stopSelf()
         }
-        return START_NOT_STICKY
+        val outcome = executeOp(
+            kind,
+            srcPaths,
+            archiveStr,
+            destStr,
+            formatName,
+            password,
+            elevationMode
+        )
+        progressJob.cancel()
+        val finalOutcome = if (stalledDetected) {
+            OpOutcome.Failed("Operation stalled (no progress for 5 minutes)")
+        } else {
+            outcome
+        }
+        ArchiveOpManager.finished(kind, label, finalOutcome)
+        val done = buildCompletionNotification(label, finalOutcome)
+        try {
+            ServiceCompat.stopForeground(this@ArchiveService, STOP_FOREGROUND_DETACH)
+        } catch (_: Exception) {
+        }
+        try {
+            val manager =
+                getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            manager.notify(NOTIFICATION_ID, done)
+        } catch (_: Exception) {
+        }
+        owned = false
+        stopSelf()
+    }
+
+    private fun recordSample(doneBytes: Long): Double? {
+        val now = SystemClock.elapsedRealtime()
+        speedWindow.addLast(Pair(now, doneBytes))
+        while (speedWindow.size > 5) {
+            speedWindow.removeFirst()
+        }
+        val oldest = speedWindow.first()
+        val newest = speedWindow.last()
+        val elapsedMs = newest.first - oldest.first
+        if (elapsedMs <= 0L) {
+            return null
+        }
+        val deltaBytes = newest.second - oldest.second
+        if (deltaBytes <= 0L) {
+            return null
+        }
+        return deltaBytes.toDouble() / (elapsedMs / 1000.0)
+    }
+
+    private fun formatSpeed(speed: Double): String {
+        return Formatter.formatShortFileSize(this, speed.toLong()) + "/s"
+    }
+
+    private fun formatEta(total: Long, done: Long, speed: Double?): String? {
+        if (speed == null || speed <= 0.0) {
+            return null
+        }
+        val remaining = total - done
+        if (total <= 0L || remaining <= 0L) {
+            return null
+        }
+        val seconds = remaining / speed
+        return when {
+            seconds < 60.0 -> "less than a minute left"
+            seconds < 3600.0 -> "~" + ((seconds + 59.0).toLong() / 60L) + " min left"
+            else -> "~" + ((seconds + 3599.0).toLong() / 3600L) + " hr left"
+        }
     }
 
     private suspend fun executeOp(
@@ -297,6 +401,34 @@ class ArchiveService : Service() {
         }
     }
 
+    private fun acquireWakeLock() {
+        if (wakeLock != null) {
+            return
+        }
+        try {
+            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            val lock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "karchiver:archive-op")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                lock.setReferenceCounted(false)
+            }
+            lock.acquire()
+            wakeLock = lock
+        } catch (_: Throwable) {
+            wakeLock = null
+        }
+    }
+
+    private fun releaseWakeLock() {
+        val lock = wakeLock ?: return
+        wakeLock = null
+        try {
+            if (lock.isHeld) {
+                lock.release()
+            }
+        } catch (_: Throwable) {
+        }
+    }
+
     private fun ensureChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val manager = getSystemService(NotificationManager::class.java)
@@ -305,12 +437,23 @@ class ArchiveService : Service() {
                     NotificationChannel(CHANNEL_ID, "Archive operations", NotificationManager.IMPORTANCE_LOW)
                 manager.createNotificationChannel(channel)
             }
+            if (manager.getNotificationChannel(DONE_CHANNEL_ID) == null) {
+                val channel =
+                    NotificationChannel(DONE_CHANNEL_ID, "Archive finished", NotificationManager.IMPORTANCE_DEFAULT)
+                manager.createNotificationChannel(channel)
+            }
         }
     }
 
-    private fun buildProgressNotification(label: String, done: Long, total: Long): Notification {
+    private fun buildProgressNotification(
+        label: String,
+        done: Long,
+        total: Long,
+        speedText: String?,
+        etaText: String?
+    ): Notification {
         val indeterminate = total <= 0L
-        val text = if (indeterminate) {
+        val base = if (indeterminate) {
             if (done > 0L) {
                 Formatter.formatShortFileSize(this, done) + " processed"
             } else {
@@ -319,10 +462,17 @@ class ArchiveService : Service() {
         } else {
             Formatter.formatShortFileSize(this, done) + " of " + Formatter.formatShortFileSize(this, total)
         }
+        var text = base
+        if (speedText != null) {
+            text = text + " · " + speedText
+        }
+        if (etaText != null) {
+            text = text + " · " + etaText
+        }
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(label)
             .setContentText(text)
-            .setSmallIcon(android.R.drawable.stat_sys_download)
+            .setSmallIcon(R.mipmap.ic_launcher)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
         if (indeterminate) {
@@ -353,10 +503,10 @@ class ArchiveService : Service() {
         openIntent.flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
         val pendingFlags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         val contentPending = PendingIntent.getActivity(this, 0, openIntent, pendingFlags)
-        return NotificationCompat.Builder(this, CHANNEL_ID)
+        return NotificationCompat.Builder(this, DONE_CHANNEL_ID)
             .setContentTitle(label)
             .setContentText(text)
-            .setSmallIcon(android.R.drawable.stat_sys_download)
+            .setSmallIcon(R.mipmap.ic_launcher)
             .setContentIntent(contentPending)
             .setAutoCancel(true)
             .setOngoing(false)
@@ -377,6 +527,23 @@ class ArchiveService : Service() {
         }
     }
 
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+            super.onTimeout(startId, fgsType)
+            return
+        }
+        cancelCurrent()
+        if (owned) {
+            val current = ArchiveOpManager.active.value
+            if (current != null) {
+                ArchiveOpManager.finished(current.kind, current.label, OpOutcome.Cancelled)
+            }
+        }
+        owned = false
+        releaseWakeLock()
+        stopSelf()
+    }
+
     override fun onDestroy() {
         try {
             scopeJob?.cancel()
@@ -395,6 +562,7 @@ class ArchiveService : Service() {
             }
         }
         owned = false
+        releaseWakeLock()
         super.onDestroy()
     }
 }

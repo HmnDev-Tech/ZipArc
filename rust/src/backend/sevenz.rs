@@ -218,7 +218,7 @@ fn extract_entry(
 
 /// Extract a 7z archive into `dest`.
 pub fn extract(archive: &Path, dest: &Path, limits: &Limits) -> Result<()> {
-    extract_impl(archive, dest, limits, None)
+    extract_impl(archive, dest, limits, None, None)
 }
 
 pub fn extract_with_password(
@@ -228,9 +228,39 @@ pub fn extract_with_password(
     password: &str,
 ) -> Result<()> {
     if password.is_empty() {
-        return extract_impl(archive, dest, limits, None);
+        return extract_impl(archive, dest, limits, None, None);
     }
-    extract_impl(archive, dest, limits, Some(password))
+    extract_impl(archive, dest, limits, Some(password), None)
+}
+
+pub fn extract_filtered(
+    archive: &Path,
+    dest: &Path,
+    limits: &Limits,
+    names: &[String],
+) -> Result<()> {
+    let filters = crate::backend::normalize_filter_names(names)?;
+    if filters.is_empty() {
+        return Ok(());
+    }
+    extract_impl(archive, dest, limits, None, Some(&filters))
+}
+
+pub fn extract_filtered_with_password(
+    archive: &Path,
+    dest: &Path,
+    limits: &Limits,
+    names: &[String],
+    password: &str,
+) -> Result<()> {
+    let filters = crate::backend::normalize_filter_names(names)?;
+    if filters.is_empty() {
+        return Ok(());
+    }
+    if password.is_empty() {
+        return extract_impl(archive, dest, limits, None, Some(&filters));
+    }
+    extract_impl(archive, dest, limits, Some(password), Some(&filters))
 }
 
 fn extract_impl(
@@ -238,6 +268,7 @@ fn extract_impl(
     dest: &Path,
     limits: &Limits,
     password: Option<&str>,
+    filter: Option<&[String]>,
 ) -> Result<()> {
     std::fs::create_dir_all(dest)?;
     let dest_root = std::fs::canonicalize(dest)?;
@@ -252,6 +283,7 @@ fn extract_impl(
         .files
         .iter()
         .filter(|f| !f.is_directory())
+        .filter(|f| filter.is_none_or(|flt| crate::backend::filter_matches(f.name(), flt)))
         .fold(0u64, |acc, f| acc.saturating_add(f.size()));
     progress_reset(total);
     let mut state = LimitState::new(limits);
@@ -267,6 +299,15 @@ fn extract_impl(
             return Ok(true);
         }
         let name = entry.name().to_string();
+        if filter.is_some_and(|f| !crate::backend::filter_matches(&name, f)) {
+            let mut cancellable = CancelReader::new(&mut *data);
+            let _ = io::copy(&mut cancellable, &mut io::sink());
+            if is_cancelled() {
+                fatal = Some(ArchiveError::Cancelled);
+                return Err(sevenz_rust2::Error::Unsupported("karchiver fatal".into()));
+            }
+            return Ok(true);
+        }
         match extract_entry(entry, &mut *data, &dest_root, &mut state) {
             Ok(()) => Ok(true),
             Err(e) if e.is_fatal() => {

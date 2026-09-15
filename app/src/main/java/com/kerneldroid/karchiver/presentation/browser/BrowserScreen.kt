@@ -80,6 +80,7 @@ import com.kerneldroid.karchiver.data.archive.OpKind
 import com.kerneldroid.karchiver.presentation.components.RoundedTopScaffold
 import com.kerneldroid.karchiver.presentation.components.detectBarHold
 import com.kerneldroid.karchiver.data.storage.AppVolume
+import com.kerneldroid.karchiver.data.storage.VolumeKind
 import com.kerneldroid.karchiver.presentation.storage.deepestVolumeFor
 import com.kerneldroid.karchiver.presentation.storage.isWithin
 import kotlinx.coroutines.Job
@@ -945,7 +946,7 @@ private fun VolumePickerDialog(
                         leadingContent = {
                             Icon(
                                 if (volume.isPrimary) Icons.Filled.Smartphone
-                                else if (volume.label.contains("usb", ignoreCase = true)) Icons.Filled.Usb
+                                else if (volume.kind == VolumeKind.USB) Icons.Filled.Usb
                                 else Icons.Filled.SdStorage,
                                 null
                             )

@@ -158,6 +158,54 @@ pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_extract(
     finish_int(&mut env, "extract", outcome)
 }
 
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_extractFiltered(
+    mut env: JNIEnv,
+    _class: JClass,
+    archive_str: JString,
+    dest_str: JString,
+    names_array: JObjectArray,
+) -> jint {
+    let outcome = catch_unwind(AssertUnwindSafe(|| -> Result<()> {
+        clear_cancel();
+        let archive = PathBuf::from(read_string(&mut env, &archive_str)?);
+        let dest = PathBuf::from(read_string(&mut env, &dest_str)?);
+        let names = read_strings(&mut env, &names_array)?;
+        let format = format::detect(&archive)?;
+        backend::extract_filtered(&archive, format, &names, &dest)
+    }));
+    finish_int(&mut env, "extractFiltered", outcome)
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_extractFilteredWithPassword(
+    mut env: JNIEnv,
+    _class: JClass,
+    archive_str: JString,
+    dest_str: JString,
+    names_array: JObjectArray,
+    password_str: JString,
+) -> jint {
+    let outcome = catch_unwind(AssertUnwindSafe(|| -> Result<()> {
+        clear_cancel();
+        let archive = PathBuf::from(read_string(&mut env, &archive_str)?);
+        let dest = PathBuf::from(read_string(&mut env, &dest_str)?);
+        let names = read_strings(&mut env, &names_array)?;
+        let password = read_string(&mut env, &password_str)?;
+        let format = format::detect(&archive)?;
+        let result = backend::extract_filtered_with_password(
+            &archive,
+            format,
+            &names,
+            &dest,
+            password.as_bytes(),
+        );
+        wipe_password(password);
+        result
+    }));
+    finish_int(&mut env, "extractFilteredWithPassword", outcome)
+}
+
 /// `listArchive(archivePath: String): Array<String>`
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_listArchive<'local>(

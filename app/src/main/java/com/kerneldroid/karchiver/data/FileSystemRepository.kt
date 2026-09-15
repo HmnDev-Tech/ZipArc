@@ -304,7 +304,22 @@ class FileSystemRepository {
             if (src.isDirectory) {
                 if (!src.copyRecursively(dst, overwrite = true)) error("Copy failed")
             } else {
-                Files.copy(src.toPath(), dst.toPath(), StandardCopyOption.REPLACE_EXISTING)
+                transactionalCopy(src, dst)
+            }
+        }
+    }
+
+    private fun transactionalCopy(src: File, dst: File) {
+        val parent = dst.parentFile ?: dst.absoluteFile.parentFile
+        parent?.mkdirs()
+        val part = File(parent, ".${dst.name}.karchiver-part")
+        try {
+            Files.copy(src.toPath(), part.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            Files.move(part.toPath(), dst.toPath(), StandardCopyOption.REPLACE_EXISTING)
+        } finally {
+            try {
+                if (part.exists()) part.delete()
+            } catch (_: Exception) {
             }
         }
     }
@@ -452,10 +467,34 @@ class FileSystemRepository {
         runCatching {
             normalExtract(archive, destDir, password)
         }.recoverCatching { e ->
+            if (tryPfdExtract(archive, destDir, password)) return@recoverCatching
             if (trySafExtract(archive, destDir, password)) return@recoverCatching
             val eng = elevated ?: throw e
             if (archive.canRead()) throw e
             extractElevated(archive, destDir, password, eng, elevationMode).getOrThrow()
+        }
+    }
+
+    private suspend fun tryPfdExtract(archive: File, destDir: File, password: String?): Boolean {
+        if (!safAutoFallback) return false
+        val bridge = safBridge ?: return false
+        if (!RustBridge.isLoaded()) return false
+        val destWritable = try { destDir.canWrite() } catch (_: Exception) { false }
+        if (!destWritable) return false
+        val archiveReadable = try { archive.canRead() } catch (_: Exception) { false }
+        if (archiveReadable) return false
+        val pfd = bridge.openReadFdFor(archive, safVolumes) ?: return false
+        return try {
+            val code = if (password.isNullOrEmpty()) {
+                RustBridge.extractFd(pfd.fd, destDir.absolutePath)
+            } else {
+                RustBridge.extractWithPasswordFd(pfd.fd, destDir.absolutePath, password)
+            }
+            code == 0
+        } catch (_: Exception) {
+            false
+        } finally {
+            closeQuietly(pfd)
         }
     }
 
@@ -486,7 +525,7 @@ class FileSystemRepository {
                     } catch (_: Exception) {
                         return false
                     }
-                    !bridge.stageExtractOut(work, destDir, safVolumes)
+                    bridge.copyStagedOut(work, destDir, safVolumes)
                 }
             } finally {
                 try {
@@ -575,9 +614,31 @@ class FileSystemRepository {
         runCatching {
             normalPreview(archive, password)
         }.recoverCatching { e ->
+            tryPfdPreview(archive, password)?.let { return@recoverCatching it }
             val eng = elevated ?: throw e
             if (archive.canRead()) throw e
             previewElevated(archive, password, eng, elevationMode).getOrThrow()
+        }
+    }
+
+    private suspend fun tryPfdPreview(archive: File, password: String?): PreviewListing? {
+        if (!safAutoFallback) return null
+        val bridge = safBridge ?: return null
+        if (!RustBridge.isLoaded()) return null
+        val archiveReadable = try { archive.canRead() } catch (_: Exception) { false }
+        if (archiveReadable) return null
+        val pfd = bridge.openReadFdFor(archive, safVolumes) ?: return null
+        return try {
+            val json = if (password.isNullOrEmpty()) {
+                RustBridge.listArchiveDetailedFd(pfd.fd)
+            } else {
+                RustBridge.listArchiveDetailedWithPasswordFd(pfd.fd, password)
+            }
+            parsePreviewJson(json)
+        } catch (_: Exception) {
+            null
+        } finally {
+            closeQuietly(pfd)
         }
     }
 
@@ -646,9 +707,31 @@ class FileSystemRepository {
         runCatching {
             normalTest(archive, password)
         }.recoverCatching { e ->
+            tryPfdTest(archive, password)?.let { return@recoverCatching it }
             val eng = elevated ?: throw e
             if (archive.canRead()) throw e
             testElevated(archive, password, eng, elevationMode).getOrThrow()
+        }
+    }
+
+    private suspend fun tryPfdTest(archive: File, password: String?): TestReport? {
+        if (!safAutoFallback) return null
+        val bridge = safBridge ?: return null
+        if (!RustBridge.isLoaded()) return null
+        val archiveReadable = try { archive.canRead() } catch (_: Exception) { false }
+        if (archiveReadable) return null
+        val pfd = bridge.openReadFdFor(archive, safVolumes) ?: return null
+        return try {
+            val json = if (password.isNullOrEmpty()) {
+                RustBridge.testArchiveFd(pfd.fd)
+            } else {
+                RustBridge.testArchiveWithPasswordFd(pfd.fd, password)
+            }
+            parseTestJson(json)
+        } catch (_: Exception) {
+            null
+        } finally {
+            closeQuietly(pfd)
         }
     }
 
@@ -866,48 +949,93 @@ class FileSystemRepository {
     }
 
     suspend fun extractArchiveEntries(archive: File, names: List<String>, destDir: File, password: String?): Result<Unit> = withContext(Dispatchers.IO) {
+        if (names.isEmpty()) return@withContext Result.success(Unit)
         runCatching {
-            if (!archive.isFile || !archive.canWrite()) error("Editing requires a writable local file")
-            if (names.isEmpty()) return@runCatching
+            if (!archive.isFile || !archive.canRead()) error("Extraction requires a readable archive")
             for (entryName in names) {
                 if (entryName.split("/").contains("..")) error("Invalid entry path")
             }
-            destDir.mkdirs()
-            val base = tempDir?.takeIf { it.exists() || it.mkdirs() } ?: destDir.parentFile ?: File(System.getProperty("java.io.tmpdir") ?: "/tmp")
-            base.mkdirs()
-            val staging = File(base, "karchiver-entries-" + System.nanoTime())
-            staging.mkdirs()
-            try {
-                if (RustBridge.isLoaded()) {
-                    val code = if (password.isNullOrEmpty()) {
-                        RustBridge.extract(archive.absolutePath, staging.absolutePath)
-                    } else {
-                        RustBridge.extractWithPassword(archive.absolutePath, staging.absolutePath, password)
-                    }
-                    if (code != 0) error("Rust extract failed code=$code")
+            val bridge = if (safAutoFallback) safBridge else null
+            if (destDir.canWrite()) {
+                extractFilteredLocal(archive, names, destDir, password)
+            } else if (bridge != null && trySafExtractEntries(archive, names, destDir, password, bridge)) {
+                return@runCatching
+            } else {
+                extractFilteredLocal(archive, names, destDir, password)
+            }
+        }
+    }
+
+    private fun extractFilteredLocal(archive: File, names: List<String>, destDir: File, password: String?) {
+        if (RustBridge.isLoaded()) {
+            if (password.isNullOrEmpty()) {
+                RustBridge.extractFiltered(archive.absolutePath, destDir.absolutePath, names.toTypedArray())
+            } else {
+                RustBridge.extractFilteredWithPassword(archive.absolutePath, destDir.absolutePath, names.toTypedArray(), password)
+            }
+            return
+        }
+        if (!password.isNullOrEmpty()) error("Password protection requires the native engine")
+        val base = tempDir?.takeIf { it.exists() || it.mkdirs() } ?: destDir.parentFile ?: File(System.getProperty("java.io.tmpdir") ?: "/tmp")
+        base.mkdirs()
+        val staging = File(base, "karchiver-entries-" + System.nanoTime())
+        staging.mkdirs()
+        try {
+            fallbackUnzip(archive, staging)
+            for (entryName in names) {
+                val trimmed = entryName.trim().trimStart('/')
+                if (trimmed.isEmpty()) error("Invalid entry path")
+                if (trimmed.split("/").contains("..")) error("Invalid entry path")
+                val src = File(staging, trimmed)
+                if (!src.exists()) error("Entry not found: $trimmed")
+                val dst = File(destDir, trimmed)
+                if (src.isDirectory) {
+                    if (!src.copyRecursively(dst, overwrite = true)) error("Copy failed")
                 } else {
-                    fallbackUnzip(archive, staging)
+                    transactionalCopy(src, dst)
                 }
-                for (entryName in names) {
-                    val trimmed = entryName.trim().trimStart('/')
-                    if (trimmed.isEmpty()) error("Invalid entry path")
-                    if (trimmed.split("/").contains("..")) error("Invalid entry path")
-                    val src = File(staging, trimmed)
-                    if (!src.exists()) error("Entry not found: $trimmed")
-                    val dst = File(destDir, trimmed)
-                    if (src.isDirectory) {
-                        if (!src.copyRecursively(dst, overwrite = true)) error("Copy failed")
-                    } else {
-                        dst.parentFile?.mkdirs()
-                        Files.copy(src.toPath(), dst.toPath(), StandardCopyOption.REPLACE_EXISTING)
-                    }
+            }
+        } finally {
+            try {
+                staging.deleteRecursively()
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    private suspend fun trySafExtractEntries(
+        archive: File,
+        names: List<String>,
+        destDir: File,
+        password: String?,
+        bridge: SafBridge
+    ): Boolean {
+        if (!RustBridge.isLoaded()) return false
+        val tmp = tempDir ?: return false
+        return try {
+            tmp.mkdirs()
+            val staging = File(tmp, "saf-entries-" + System.nanoTime())
+            staging.mkdirs()
+            if (!staging.isDirectory) return false
+            try {
+                val effective = bridge.stageArchiveIn(archive, safVolumes, staging) ?: archive
+                val work = File(staging, "out")
+                work.mkdirs()
+                if (!work.isDirectory) return false
+                if (password.isNullOrEmpty()) {
+                    RustBridge.extractFiltered(effective.absolutePath, work.absolutePath, names.toTypedArray())
+                } else {
+                    RustBridge.extractFilteredWithPassword(effective.absolutePath, work.absolutePath, names.toTypedArray(), password)
                 }
+                bridge.copyStagedOut(work, destDir, safVolumes)
             } finally {
                 try {
                     staging.deleteRecursively()
                 } catch (_: Exception) {
                 }
             }
+        } catch (_: Exception) {
+            false
         }
     }
 }
@@ -920,6 +1048,8 @@ object RustBridge {
     @JvmStatic external fun extract(archivePath: String, destDir: String): Int
     @JvmStatic external fun compressWithPassword(srcPaths: Array<String>, destPath: String, password: String): Int
     @JvmStatic external fun extractWithPassword(archivePath: String, destDir: String, password: String): Int
+    @JvmStatic external fun extractFiltered(archivePath: String, destDir: String, names: Array<String>)
+    @JvmStatic external fun extractFilteredWithPassword(archivePath: String, destDir: String, names: Array<String>, password: String)
     @JvmStatic external fun listArchive(archivePath: String): Array<String>
     @JvmStatic external fun listArchiveDetailed(archivePath: String): String
     @JvmStatic external fun listArchiveDetailedWithPassword(archivePath: String, password: String): String

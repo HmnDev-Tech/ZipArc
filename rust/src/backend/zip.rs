@@ -359,7 +359,7 @@ fn compress_impl(
 /// Extract a ZIP into `dest`, skipping per-entry failures and aborting only on
 /// security / limit violations.
 pub fn extract(archive: &Path, dest: &Path, limits: &Limits) -> Result<()> {
-    extract_impl(archive, dest, limits, None)
+    extract_impl(archive, dest, limits, None, None)
 }
 
 pub fn extract_with_password(
@@ -369,15 +369,48 @@ pub fn extract_with_password(
     password: &[u8],
 ) -> Result<()> {
     if password.is_empty() {
-        return extract_impl(archive, dest, limits, None);
+        return extract_impl(archive, dest, limits, None, None);
     }
-    extract_impl(archive, dest, limits, Some(password))
+    extract_impl(archive, dest, limits, Some(password), None)
 }
 
-fn zip_unpacked_total<R: Read + Seek>(zip: &mut ZipArchive<R>) -> u64 {
+pub fn extract_filtered(
+    archive: &Path,
+    dest: &Path,
+    limits: &Limits,
+    names: &[String],
+) -> Result<()> {
+    let filters = crate::backend::normalize_filter_names(names)?;
+    if filters.is_empty() {
+        return Ok(());
+    }
+    extract_impl(archive, dest, limits, None, Some(&filters))
+}
+
+pub fn extract_filtered_with_password(
+    archive: &Path,
+    dest: &Path,
+    limits: &Limits,
+    names: &[String],
+    password: &[u8],
+) -> Result<()> {
+    let filters = crate::backend::normalize_filter_names(names)?;
+    if filters.is_empty() {
+        return Ok(());
+    }
+    if password.is_empty() {
+        return extract_impl(archive, dest, limits, None, Some(&filters));
+    }
+    extract_impl(archive, dest, limits, Some(password), Some(&filters))
+}
+
+fn zip_unpacked_total<R: Read + Seek>(zip: &mut ZipArchive<R>, filter: Option<&[String]>) -> u64 {
     let mut total = 0u64;
     for i in 0..zip.len() {
         if let Ok(entry) = zip.by_index_raw(i) {
+            if filter.is_some_and(|f| !crate::backend::filter_matches(entry.name(), f)) {
+                continue;
+            }
             total = total.saturating_add(entry.size());
         }
     }
@@ -389,19 +422,20 @@ fn extract_impl(
     dest: &Path,
     limits: &Limits,
     password: Option<&[u8]>,
+    filter: Option<&[String]>,
 ) -> Result<()> {
     std::fs::create_dir_all(dest)?;
     let dest_root = std::fs::canonicalize(dest)?;
     match resolve_split_segments(archive)? {
         None => {
             let mut zip = open_single(archive)?;
-            progress_reset(zip_unpacked_total(&mut zip));
-            extract_entries(&mut zip, &dest_root, limits, password)
+            progress_reset(zip_unpacked_total(&mut zip, filter));
+            extract_entries(&mut zip, &dest_root, limits, password, filter)
         }
         Some(segments) => {
             let mut zip = open_split(&segments)?;
-            progress_reset(zip_unpacked_total(&mut zip));
-            extract_entries(&mut zip, &dest_root, limits, password)
+            progress_reset(zip_unpacked_total(&mut zip, filter));
+            extract_entries(&mut zip, &dest_root, limits, password, filter)
         }
     }
 }
@@ -411,6 +445,7 @@ fn extract_entries<R: Read + Seek>(
     dest_root: &Path,
     limits: &Limits,
     password: Option<&[u8]>,
+    filter: Option<&[String]>,
 ) -> Result<()> {
     let mut state = LimitState::new(limits);
     let mut warnings: Vec<String> = Vec::new();
@@ -427,6 +462,10 @@ fn extract_entries<R: Read + Seek>(
         };
         let name = entry.name().to_string();
         let declared = entry.size();
+
+        if filter.is_some_and(|f| !crate::backend::filter_matches(&name, f)) {
+            continue;
+        }
 
         if entry.is_dir() {
             match safe_join(dest_root, &name)
@@ -1255,5 +1294,47 @@ mod edit_tests {
         assert!(matches!(r, Err(ArchiveError::Unsupported(_))));
         let r2 = crate::backend::rename_entry(&fake, Format::Rar, "a", "b");
         assert!(matches!(r2, Err(ArchiveError::Unsupported(_))));
+    }
+
+    #[test]
+    fn extract_filtered_single_file() {
+        let dir = tempdir().unwrap();
+        let archive = make_zip(dir.path(), "f.zip");
+        let out = dir.path().join("out");
+        crate::backend::extract_filtered(&archive, Format::Zip, &["src/a.txt".to_string()], &out)
+            .unwrap();
+        assert!(out.join("src/a.txt").is_file());
+        assert!(!out.join("src/mydir/b.txt").exists());
+    }
+
+    #[test]
+    fn extract_filtered_dir_subtree() {
+        let dir = tempdir().unwrap();
+        let archive = make_zip(dir.path(), "f.zip");
+        let out = dir.path().join("out");
+        crate::backend::extract_filtered(&archive, Format::Zip, &["src/mydir/".to_string()], &out)
+            .unwrap();
+        assert!(out.join("src/mydir/b.txt").is_file());
+        assert!(out.join("src/mydir/sub/c.txt").is_file());
+        assert!(!out.join("src/a.txt").exists());
+    }
+
+    #[test]
+    fn extract_filtered_empty_is_noop() {
+        let dir = tempdir().unwrap();
+        let archive = make_zip(dir.path(), "f.zip");
+        let out = dir.path().join("out");
+        crate::backend::extract_filtered(&archive, Format::Zip, &[], &out).unwrap();
+        assert!(!out.exists() || out.read_dir().unwrap().next().is_none());
+    }
+
+    #[test]
+    fn extract_filtered_rejects_parent_dir() {
+        let dir = tempdir().unwrap();
+        let archive = make_zip(dir.path(), "f.zip");
+        let out = dir.path().join("out");
+        let r =
+            crate::backend::extract_filtered(&archive, Format::Zip, &["../evil".to_string()], &out);
+        assert!(matches!(r, Err(ArchiveError::Invalid(_))));
     }
 }

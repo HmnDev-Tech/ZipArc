@@ -46,9 +46,12 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -66,7 +69,8 @@ import com.kerneldroid.karchiver.data.loadVolumeStats
 import com.kerneldroid.karchiver.presentation.components.RoundedTopScaffold
 import com.kerneldroid.karchiver.presentation.components.detectBarHold
 import com.kerneldroid.karchiver.data.storage.AppVolume
-import com.kerneldroid.karchiver.data.storage.loadAppVolumes
+import com.kerneldroid.karchiver.data.storage.VolumeKind
+import com.kerneldroid.karchiver.data.storage.VolumeMonitor
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -93,8 +97,15 @@ fun HomeScreen(
     val volumes by produceState(initialValue = emptyList<VolumeStats>(), context) {
         value = withContext(Dispatchers.IO) { loadVolumeStats(context.applicationContext) }
     }
-    val appVolumes by produceState(initialValue = emptyList<AppVolume>(), context) {
-        value = withContext(Dispatchers.IO) { loadAppVolumes(context.applicationContext) }
+    var appVolumes by remember { mutableStateOf(emptyList<AppVolume>()) }
+    val appContext = remember(context) { context.applicationContext }
+    DisposableEffect(appContext) {
+        val monitor = VolumeMonitor(appContext) { appVolumes = it }
+        monitor.start()
+        onDispose { monitor.stop() }
+    }
+    val kindByPath = remember(appVolumes) {
+        appVolumes.associate { it.root.absolutePath to it.kind }
     }
     val mergedVolumes = remember(volumes, appVolumes) {
         val known = volumes.map { it.path }.toSet()
@@ -133,7 +144,7 @@ fun HomeScreen(
                 SectionHeader("Storage")
             }
             items(mergedVolumes, key = { it.path }) { stats ->
-                StorageCard(stats = stats, onClick = { onOpenPath(stats.path) })
+                StorageCard(stats = stats, kind = kindByPath[stats.path] ?: VolumeKind.INTERNAL, onClick = { onOpenPath(stats.path) })
             }
             item {
                 SectionHeader("Recent folders")
@@ -218,7 +229,7 @@ private fun statOfVolume(label: String, root: File): VolumeStats? {
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-private fun StorageCard(stats: VolumeStats, onClick: () -> Unit) {
+private fun StorageCard(stats: VolumeStats, kind: VolumeKind, onClick: () -> Unit) {
     val progress by animateFloatAsState(
         targetValue = stats.usedFraction,
         animationSpec = ProgressIndicatorDefaults.ProgressAnimationSpec,
@@ -227,12 +238,10 @@ private fun StorageCard(stats: VolumeStats, onClick: () -> Unit) {
     val lowSpace = stats.totalBytes > 0 && stats.freeBytes < stats.totalBytes * 0.1
     val progressColor = if (lowSpace) MaterialTheme.colorScheme.error
     else MaterialTheme.colorScheme.primary
-    val isUsb = stats.label.contains("usb", ignoreCase = true)
-    val isSd = isUsb || !stats.path.startsWith(Environment.getExternalStorageDirectory().absolutePath)
-    val icon = when {
-        isUsb -> Icons.Filled.Usb
-        isSd -> Icons.Filled.SdStorage
-        else -> Icons.Filled.Save
+    val icon = when (kind) {
+        VolumeKind.USB -> Icons.Filled.Usb
+        VolumeKind.SD_CARD -> Icons.Filled.SdStorage
+        VolumeKind.INTERNAL -> Icons.Filled.Save
     }
 
     Card(

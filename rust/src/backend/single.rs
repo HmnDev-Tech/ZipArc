@@ -152,6 +152,24 @@ pub fn extract(archive: &Path, dest: &Path, format: Format, limits: &Limits) -> 
     Ok(())
 }
 
+pub fn extract_filtered(
+    archive: &Path,
+    dest: &Path,
+    format: Format,
+    limits: &Limits,
+    names: &[String],
+) -> Result<()> {
+    let filters = crate::backend::normalize_filter_names(names)?;
+    if filters.is_empty() {
+        return Ok(());
+    }
+    let name = output_name(archive)?;
+    if !crate::backend::filter_matches(&name, &filters) {
+        return Ok(());
+    }
+    extract(archive, dest, format, limits)
+}
+
 /// A single-stream archive contains one logical file.
 pub fn list(archive: &Path, _format: Format) -> Result<Vec<String>> {
     Ok(vec![output_name(archive)?])

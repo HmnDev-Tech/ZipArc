@@ -14,7 +14,7 @@ use walkdir::WalkDir;
 
 use crate::error::{ArchiveError, Result};
 use crate::format::Format;
-use crate::io_util::{Limits, check_cancelled, log_warn, progress_reset};
+use crate::io_util::{Limits, check_cancelled, log_warn, progress_reset, sanitize_entry_name};
 
 /// One file or directory selected for compression.
 #[derive(Debug, Clone)]
@@ -281,6 +281,83 @@ pub fn extract_with_password(
         Format::Zip => zip::extract_with_password(archive, dest, limits, password.as_bytes()),
         Format::SevenZ => sevenz::extract_with_password(archive, dest, limits, password),
         Format::Rar => rar::extract_with_password(archive, dest, limits, password),
+        other => reject_password(other, "extraction"),
+    }
+}
+
+pub(crate) fn normalize_filter_names(names: &[String]) -> Result<Vec<String>> {
+    let mut out = Vec::with_capacity(names.len());
+    for name in names {
+        if name.split(['/', '\\']).any(|segment| segment == "..") {
+            return Err(ArchiveError::invalid(format!("invalid entry name: {name}")));
+        }
+        let clean = sanitize_entry_name(name)?;
+        out.push(clean.trim_end_matches('/').to_string());
+    }
+    Ok(out)
+}
+
+pub(crate) fn filter_matches(entry: &str, filters: &[String]) -> bool {
+    let entry = entry.trim_end_matches('/');
+    filters.iter().any(|filter| {
+        let filter = filter.trim_end_matches('/');
+        !filter.is_empty() && (entry == filter || entry.starts_with(&format!("{filter}/")))
+    })
+}
+
+pub fn extract_filtered(
+    archive: &Path,
+    format: Format,
+    names: &[String],
+    dest: &Path,
+) -> Result<()> {
+    let filters = normalize_filter_names(names)?;
+    if filters.is_empty() {
+        return Ok(());
+    }
+    let limits = Limits::default();
+    match format {
+        Format::Zip => zip::extract_filtered(archive, dest, &limits, &filters),
+        Format::SevenZ => sevenz::extract_filtered(archive, dest, &limits, &filters),
+        f if f.is_tar() => tar::extract_filtered(archive, dest, f, &limits, &filters),
+        f if f.is_single_stream() => single::extract_filtered(archive, dest, f, &limits, &filters),
+        Format::Rar => rar::extract_filtered(archive, dest, &limits, &filters),
+        other => Err(ArchiveError::Unsupported(format!(
+            "Filtered extraction of {} archives is not supported",
+            other.label()
+        ))),
+    }
+}
+
+pub fn extract_filtered_with_password(
+    archive: &Path,
+    format: Format,
+    names: &[String],
+    dest: &Path,
+    password: &[u8],
+) -> Result<()> {
+    if password.is_empty() {
+        return extract_filtered(archive, format, names, dest);
+    }
+    let filters = normalize_filter_names(names)?;
+    if filters.is_empty() {
+        return Ok(());
+    }
+    let limits = Limits::default();
+    match format {
+        Format::Zip => {
+            zip::extract_filtered_with_password(archive, dest, &limits, &filters, password)
+        }
+        Format::SevenZ => {
+            let pw = std::str::from_utf8(password)
+                .map_err(|_| ArchiveError::invalid("password is not valid UTF-8"))?;
+            sevenz::extract_filtered_with_password(archive, dest, &limits, &filters, pw)
+        }
+        Format::Rar => {
+            let pw = std::str::from_utf8(password)
+                .map_err(|_| ArchiveError::invalid("password is not valid UTF-8"))?;
+            rar::extract_filtered_with_password(archive, dest, &limits, &filters, pw)
+        }
         other => reject_password(other, "extraction"),
     }
 }

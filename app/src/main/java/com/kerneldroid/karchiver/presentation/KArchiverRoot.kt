@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.SdStorage
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Smartphone
+import androidx.compose.material.icons.filled.Usb
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -63,6 +64,7 @@ import com.kerneldroid.karchiver.data.SettingsRepository
 import com.kerneldroid.karchiver.data.formatBytes
 import com.kerneldroid.karchiver.data.loadVolumeStats
 import com.kerneldroid.karchiver.data.storage.AppVolume
+import com.kerneldroid.karchiver.data.storage.VolumeKind
 import com.kerneldroid.karchiver.presentation.browser.BrowserScreen
 import com.kerneldroid.karchiver.presentation.browser.BrowserViewModel
 import com.kerneldroid.karchiver.presentation.browser.ViewMode
@@ -107,7 +109,9 @@ private fun DeviceDrawerRow(
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Icon(
-                if (volume.isPrimary) Icons.Filled.Smartphone else Icons.Filled.SdStorage,
+                if (volume.isPrimary) Icons.Filled.Smartphone
+                else if (volume.kind == VolumeKind.USB) Icons.Filled.Usb
+                else Icons.Filled.SdStorage,
                 null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant
             )

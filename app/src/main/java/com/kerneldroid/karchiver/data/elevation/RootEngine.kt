@@ -35,7 +35,10 @@ object RootEngine : ElevatedFS {
     private const val PROBE_COMMAND = "id -u"
     private const val EXPECTED_ROOT_UID = "0"
     private const val PROBE_TTL_MS = 30_000L
-    private const val CALL_TIMEOUT_MS = 15_000L
+    private const val CALL_TIMEOUT_MS = 30_000L
+    private const val CALL_MIN_TIMEOUT_MS = 1_000L
+    private const val CALL_MAX_TIMEOUT_MS = 120_000L
+    private const val PROBE_ONESHOT_TIMEOUT_MS = 15_000L
     private const val HANDSHAKE_TIMEOUT_MS = 5_000L
     private const val KILL_GRACE_MS = 2_000L
     private const val STREAM_JOIN_MS = 5_000L
@@ -57,6 +60,8 @@ object RootEngine : ElevatedFS {
 
     @kotlin.jvm.Volatile
     private var mountMasterRejected = false
+    @kotlin.jvm.Volatile
+    private var suBinarySeen = false
     val degradedNamespace: Boolean
         get() = mountMasterRejected
 
@@ -105,14 +110,14 @@ object RootEngine : ElevatedFS {
                     timeoutMs,
                 )
                 if (first.missing) {
-                    noteMissing()
+                    if (suBinarySeen) invalidate() else noteMissing()
                     return@withContext ExecResult(MISSING_CODE, first.stdout)
                 }
                 if (useMaster && first.code != 0 && isUnsupportedFlag(first.stdout, first.stderr)) {
                     mountMasterRejected = true
                     val second = runOneShotInternal(listOf("su", "-c", script), timeoutMs)
                     if (second.missing) {
-                        noteMissing()
+                        if (suBinarySeen) invalidate() else noteMissing()
                         return@withContext ExecResult(MISSING_CODE, second.stdout)
                     }
                     if (second.code == 0) {
@@ -220,7 +225,8 @@ object RootEngine : ElevatedFS {
         }
     }
 
-    override suspend fun chmod(path: File, mode: Int): Boolean {        if (mode < 0) return false
+    override suspend fun chmod(path: File, mode: Int): Boolean {
+        if (mode < 0) return false
         return try {
             if (isFreshNegative()) return false
             val octal = String.format(Locale.US, "%o", mode)
@@ -315,14 +321,26 @@ object RootEngine : ElevatedFS {
         }
     }
 
-    private suspend fun runInteractive(script: String): ExecOutcome {
+    private suspend fun runInteractive(script: String, timeoutMs: Long = CALL_TIMEOUT_MS): ExecOutcome {
         return withContext(Dispatchers.IO) {
             shellLock.withLock {
                 try {
                     when (ensureShellLocked()) {
                         SpawnResult.Missing -> ExecOutcome.Missing
                         SpawnResult.Failed -> ExecOutcome.Failed
-                        SpawnResult.Ready -> sendLocked(script)
+                        SpawnResult.Ready -> {
+                            val first = sendLocked(script, timeoutMs)
+                            if (first !is ExecOutcome.Failed) {
+                                first
+                            } else {
+                                destroyShellLocked()
+                                when (ensureShellLocked()) {
+                                    SpawnResult.Ready -> sendLocked(script, timeoutMs)
+                                    SpawnResult.Missing -> ExecOutcome.Missing
+                                    SpawnResult.Failed -> ExecOutcome.Failed
+                                }
+                            }
+                        }
                     }
                 } catch (_: Exception) {
                     destroyShellLocked()
@@ -330,6 +348,17 @@ object RootEngine : ElevatedFS {
                 }
             }
         }
+    }
+
+    private fun shellSpawnChain(): List<List<String>> {
+        val chain = ArrayList<List<String>>()
+        if (!mountMasterRejected) {
+            chain.add(listOf("su", "--mount-master"))
+            chain.add(listOf("su", "-mm"))
+        }
+        chain.add(listOf("su", "0"))
+        chain.add(listOf("su"))
+        return chain
     }
 
     private fun ensureShellLocked(): SpawnResult {
@@ -348,13 +377,25 @@ object RootEngine : ElevatedFS {
             } else {
                 destroyShellLocked()
             }
-            if (!mountMasterRejected) {
-                val started = tryStartShell(listOf("su", "--mount-master"))
-                if (started == SpawnResult.Ready) return SpawnResult.Ready
-                if (started == SpawnResult.Missing) return SpawnResult.Missing
-                mountMasterRejected = true
+            var masterAttemptFailed = false
+            for (args in shellSpawnChain()) {
+                val isMasterForm = args.contains("--mount-master") || args.contains("-mm")
+                when (tryStartShell(args)) {
+                    SpawnResult.Ready -> {
+                        if (!isMasterForm && masterAttemptFailed) {
+                            mountMasterRejected = true
+                        }
+                        return SpawnResult.Ready
+                    }
+                    SpawnResult.Missing -> return SpawnResult.Missing
+                    SpawnResult.Failed -> {
+                        if (isMasterForm) masterAttemptFailed = true
+                    }
+                }
             }
-            return tryStartShell(listOf("su"))
+            return runOneShotInternal(listOf("su", "-c", PROBE_COMMAND), PROBE_ONESHOT_TIMEOUT_MS).let { raw ->
+                if (raw.missing) SpawnResult.Missing else SpawnResult.Failed
+            }
         } catch (_: Exception) {
             return SpawnResult.Failed
         }
@@ -428,7 +469,10 @@ object RootEngine : ElevatedFS {
                     destroyShellLocked()
                     return SpawnResult.Failed
                 }
-                if (line.trim() == token) return SpawnResult.Ready
+                if (line.trim() == token) {
+                    suBinarySeen = true
+                    return SpawnResult.Ready
+                }
             }
         } catch (_: InterruptedException) {
             Thread.currentThread().interrupt()
@@ -440,23 +484,22 @@ object RootEngine : ElevatedFS {
         }
     }
 
-    private fun sendLocked(script: String): ExecOutcome {
+    private fun sendLocked(script: String, timeoutMs: Long = CALL_TIMEOUT_MS): ExecOutcome {
         val writer = shellWriter ?: return ExecOutcome.Failed
         val queue = shellLines ?: return ExecOutcome.Failed
         val process = shellProcess
+        val mark = MARK_PREFIX + UUID.randomUUID().toString().replace("-", "")
         try {
             if (process != null && !process.isAlive) {
                 destroyShellLocked()
                 return ExecOutcome.Failed
             }
-        } catch (_: Exception) {
-            destroyShellLocked()
-            return ExecOutcome.Failed
-        }
-        val mark = MARK_PREFIX + UUID.randomUUID().toString().replace("-", "")
-        try {
             writer.write("( $script ) 2>&1")
             writer.newLine()
+            if (process != null && !process.isAlive) {
+                destroyShellLocked()
+                return ExecOutcome.Failed
+            }
             writer.write("echo $mark \$?")
             writer.newLine()
             writer.flush()
@@ -465,7 +508,7 @@ object RootEngine : ElevatedFS {
             return ExecOutcome.Failed
         }
         val output = StringBuilder()
-        val deadline = SystemClock.elapsedRealtime() + CALL_TIMEOUT_MS
+        val deadline = SystemClock.elapsedRealtime() + timeoutMs.coerceIn(CALL_MIN_TIMEOUT_MS, CALL_MAX_TIMEOUT_MS)
         try {
             while (true) {
                 val remaining = deadline - SystemClock.elapsedRealtime()
@@ -552,10 +595,11 @@ object RootEngine : ElevatedFS {
                 return OneShotRaw(MISSING_CODE, "", "", true, false)
             }
             val active = process ?: return OneShotRaw(MISSING_CODE, "", "", true, false)
+            suBinarySeen = true
             val outputDrain = startDrain(active.inputStream, MAX_OUTPUT_CHARS)
             val errorDrain = startDrain(active.errorStream, MAX_ERROR_CHARS)
             val finished = try {
-                active.waitFor(timeoutMs.coerceAtLeast(1L), TimeUnit.MILLISECONDS)
+                active.waitFor(timeoutMs.coerceIn(CALL_MIN_TIMEOUT_MS, CALL_MAX_TIMEOUT_MS), TimeUnit.MILLISECONDS)
             } catch (_: InterruptedException) {
                 Thread.currentThread().interrupt()
                 false
@@ -676,10 +720,11 @@ object RootEngine : ElevatedFS {
         val result = ArrayList<ElevatedEntry>()
         for (raw in output.split('\n').dropLast(1)) {
             if (raw.isEmpty()) continue
-            if (raw.contains('\r')) continue
-            if (raw == "." || raw == ".." || raw == "/") continue
-            val isDir = raw.endsWith("/") && raw.length > 1
-            val name = if (isDir) raw.dropLast(1) else raw
+            val line = if (raw.endsWith('\r')) raw.dropLast(1) else raw
+            if (line.isEmpty()) continue
+            if (line == "." || line == ".." || line == "/") continue
+            val isDir = line.endsWith("/") && line.length > 1
+            val name = if (isDir) line.dropLast(1) else line
             if (name.isEmpty()) continue
             result.add(ElevatedEntry(File(dir, name), isDir, 0L, 0L, 0))
         }
@@ -693,16 +738,17 @@ object RootEngine : ElevatedFS {
         val result = ArrayList<File>(names.size)
         for (raw in names) {
             if (raw.isEmpty()) continue
-            if (raw.contains('\r')) continue
-            if (raw == "." || raw == "..") continue
-            val name = if (raw.endsWith("/") && raw.length > 1) {
-                raw.dropLast(1)
-            } else if (raw == "/") {
+            val line = if (raw.endsWith('\r')) raw.dropLast(1) else raw
+            if (line.isEmpty()) continue
+            if (line == "." || line == ".." || line == "/") continue
+            val name = if (line.endsWith("/") && line.length > 1) {
+                line.dropLast(1)
+            } else if (line == "/") {
                 continue
             } else {
-                raw
+                line
             }
-            if (name.isEmpty() || name.contains('\r')) continue
+            if (name.isEmpty()) continue
             result.add(File(dir, name))
         }
         return result
