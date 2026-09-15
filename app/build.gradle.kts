@@ -78,6 +78,7 @@ dependencies {
     implementation(libs.androidx.navigation3.ui)
     implementation(libs.androidx.adaptive)
     implementation(libs.androidx.datastore.preferences)
+    implementation(libs.androidx.documentfile)
     implementation(libs.material.kolor)
     implementation(libs.coil.compose)
     implementation(libs.reorderable)

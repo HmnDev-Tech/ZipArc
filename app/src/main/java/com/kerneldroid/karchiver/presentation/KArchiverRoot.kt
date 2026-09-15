@@ -89,6 +89,10 @@ fun KArchiverRoot() {
     val currentRoute = backStack?.destination?.route
     val activeOp by vm.archiveOp.collectAsStateWithLifecycle()
     val progressDialogVisible by vm.progressDialogVisible.collectAsStateWithLifecycle()
+    val storageVolumes by vm.volumes.collectAsStateWithLifecycle()
+    val safGrants by vm.safGrants.collectAsStateWithLifecycle()
+    val forcedSaf by vm.forcedSaf.collectAsStateWithLifecycle()
+    val safAutoFallback by vm.safAutoFallback.collectAsStateWithLifecycle()
 
     val destinations = remember {
         listOf(
@@ -122,8 +126,11 @@ fun KArchiverRoot() {
             s.foldersFirst,
             s.rarEnabled,
             s.rarWriteEnabled,
-            s.elevationMode
+            s.elevationMode,
+            context.applicationContext,
+            s.safAutoFallback
         )
+        vm.syncSafPrefs(s.safAutoFallback)
         vm.setHideHidden(s.hideHidden)
         vm.setRarEnabled(s.rarEnabled)
         vm.setRarWriteEnabled(s.rarWriteEnabled)
@@ -237,7 +244,22 @@ fun KArchiverRoot() {
                 repo = settingsRepo,
                 onBack = { navController.popBackStack() },
                 barLifted = barLifted,
-                onToggleBar = { barLifted = !barLifted }
+                onToggleBar = { barLifted = !barLifted },
+                safAutoFallback = safAutoFallback,
+                onSetSafAutoFallback = { value ->
+                    drawerScope.launch {
+                        settingsRepo.setSafAutoFallback(value)
+                        vm.syncSafPrefs(value)
+                    }
+                },
+                safGrants = safGrants,
+                storageVolumes = storageVolumes,
+                forcedSaf = forcedSaf,
+                onForgetGrant = vm::forgetGrant,
+                onSetForceSaf = vm::setForceSaf,
+                onGrantPicked = { uri, volumeId ->
+                    drawerScope.launch { vm.onTreeGranted(uri, volumeId) }
+                }
             )
         }
     }

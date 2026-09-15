@@ -2,6 +2,7 @@ package com.kerneldroid.karchiver.presentation.browser
 
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Environment
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -30,6 +31,11 @@ import com.kerneldroid.karchiver.data.archive.ArchiveService
 import com.kerneldroid.karchiver.data.archive.OpOutcome
 import com.kerneldroid.karchiver.data.SortBy
 import com.kerneldroid.karchiver.data.TestReport
+import com.kerneldroid.karchiver.data.storage.AppVolume
+import com.kerneldroid.karchiver.data.storage.SafBridge
+import com.kerneldroid.karchiver.data.storage.SafGrants
+import com.kerneldroid.karchiver.data.storage.loadAppVolumes
+import com.kerneldroid.karchiver.presentation.storage.deepestVolumeFor
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -232,6 +238,23 @@ class BrowserViewModel(
 
     private var initialized = false
     private var loadToken = 0
+
+    val volumes = MutableStateFlow<List<AppVolume>>(emptyList())
+
+    private var appCtx: Context? = null
+    private var safHelper: SafGrants? = null
+
+    private val _safGrants = MutableStateFlow<Map<String, Uri>>(emptyMap())
+    val safGrants: StateFlow<Map<String, Uri>> = _safGrants
+
+    private val _forcedSaf = MutableStateFlow<Set<String>>(emptySet())
+    val forcedSaf: StateFlow<Set<String>> = _forcedSaf
+
+    private val _safAutoFallback = MutableStateFlow(true)
+    val safAutoFallback: StateFlow<Boolean> = _safAutoFallback
+
+    val grantRequest = MutableStateFlow<AppVolume?>(null)
+
     fun initialize(
         initialPath: String?,
         hideHidden: Boolean,
@@ -240,10 +263,17 @@ class BrowserViewModel(
         foldersFirst: Boolean = true,
         rarEnabled: Boolean = false,
         rarWriteEnabled: Boolean = false,
-        elevationMode: String = "off"
+        elevationMode: String = "off",
+        appContext: Context,
+        safAutoFallback: Boolean = true
     ) {
         if (initialized) return
         initialized = true
+        val ctx = appContext.applicationContext ?: appContext
+        appCtx = ctx
+        if (repo.tempDir == null) {
+            runCatching { repo.tempDir = ctx.cacheDir }
+        }
         val dir = initialPath?.let { File(it) }?.takeIf { it.isDirectory } ?: rootDir
         _state.value = _state.value.copy(
             currentDir = dir,
@@ -255,7 +285,85 @@ class BrowserViewModel(
             rarWriteEnabled = rarWriteEnabled,
             elevationMode = elevationMode
         )
+        viewModelScope.launch {
+            volumes.value = loadAppVolumes(ctx)
+            repo.safVolumes = volumes.value
+        }
+        val grants = SafGrants(ctx)
+        safHelper = grants
+        repo.safBridge = SafBridge(ctx, grants)
+        repo.safAutoFallback = safAutoFallback
+        _safAutoFallback.value = safAutoFallback
+        viewModelScope.launch {
+            grants.grants.collect { _safGrants.value = it }
+        }
+        viewModelScope.launch {
+            grants.forcedSaf.collect {
+                _forcedSaf.value = it
+                repo.safPreferredVolumes = it
+            }
+        }
         refresh()
+    }
+
+    fun refreshVolumes() {
+        val ctx = appCtx ?: return
+        viewModelScope.launch {
+            volumes.value = loadAppVolumes(ctx)
+            repo.safVolumes = volumes.value
+        }
+    }
+
+    fun currentVolumeRoot(): File {
+        return deepestVolumeFor(_state.value.currentDir, volumes.value)?.root ?: rootDir
+    }
+
+    fun switchVolume(v: AppVolume) {
+        navigateTo(v.root)
+    }
+
+    fun forgetGrant(volumeId: String) {
+        viewModelScope.launch {
+            safHelper?.forget(volumeId)
+        }
+    }
+
+    fun setForceSaf(volumeId: String, force: Boolean) {
+        viewModelScope.launch {
+            safHelper?.setForcedSaf(volumeId, force)
+        }
+    }
+
+    fun syncSafPrefs(value: Boolean) {
+        _safAutoFallback.value = value
+        repo.safAutoFallback = value
+    }
+
+    suspend fun onTreeGranted(uri: Uri, volumeId: String) {
+        safHelper?.takeGrant(volumeId, uri)
+        if (grantRequest.value?.id == volumeId) grantRequest.value = null
+        refreshVolumes()
+    }
+
+    fun dismissGrantRequest() {
+        grantRequest.value = null
+    }
+
+    private fun maybeRequestGrant(result: Result<Unit>) {
+        if (result.isSuccess) return
+        val msg = result.exceptionOrNull()?.message.orEmpty()
+        val denied = msg.contains("denied", ignoreCase = true) ||
+            msg.contains("permission", ignoreCase = true) ||
+            msg.contains("EACCES", ignoreCase = true) ||
+            msg.contains("not allowed", ignoreCase = true) ||
+            msg.contains("could not create", ignoreCase = true) ||
+            msg.contains("failed", ignoreCase = true)
+        if (!denied) return
+        val volume = deepestVolumeFor(_state.value.currentDir, volumes.value)
+            ?.takeIf { it.isRemovable }
+            ?: return
+        if (_safGrants.value.containsKey(volume.id)) return
+        grantRequest.value = volume
     }
 
     fun setElevationMode(value: String) {
@@ -320,8 +428,8 @@ class BrowserViewModel(
 
     fun canGoUp(): Boolean {
         val current = _state.value.currentDir
-        return current.parentFile != null &&
-            current.absolutePath != rootDir.absolutePath
+        if (current.absolutePath == currentVolumeRoot().absolutePath) return false
+        return current.parentFile != null
     }
 
     fun navigateTo(dir: File) {
@@ -404,6 +512,7 @@ class BrowserViewModel(
             else repo.copy(files, _state.value.currentDir)
             clipboard = null
             refresh()
+            maybeRequestGrant(r)
             onDone(r)
         }
     }
@@ -412,7 +521,7 @@ class BrowserViewModel(
         val files = selectedFiles(); if (files.isEmpty()) return
         viewModelScope.launch {
             val r = repo.delete(files, elevationEngine())
-            clearSelection(); refresh(); onDone(r)
+            clearSelection(); refresh(); maybeRequestGrant(r); onDone(r)
         }
     }
 
@@ -420,7 +529,7 @@ class BrowserViewModel(
         val trimmed = name.trim(); if (trimmed.isEmpty()) return
         viewModelScope.launch {
             val r = repo.createDirectory(_state.value.currentDir, trimmed, elevationEngine())
-            refresh(); onDone(r)
+            refresh(); maybeRequestGrant(r); onDone(r)
         }
     }
 
@@ -428,7 +537,7 @@ class BrowserViewModel(
         val trimmed = name.trim(); if (trimmed.isEmpty()) return
         viewModelScope.launch {
             val r = repo.createFile(_state.value.currentDir, trimmed)
-            refresh(); onDone(r)
+            refresh(); maybeRequestGrant(r); onDone(r)
         }
     }
 

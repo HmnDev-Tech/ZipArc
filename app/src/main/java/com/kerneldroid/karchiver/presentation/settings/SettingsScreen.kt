@@ -3,7 +3,10 @@ package com.kerneldroid.karchiver.presentation.settings
 import android.os.Build
 import android.os.SystemClock
 import android.app.Activity
+import android.net.Uri
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -32,7 +35,11 @@ import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Smartphone
 import androidx.compose.material.icons.filled.SortByAlpha
+import androidx.compose.material.icons.filled.Storage
+import androidx.compose.material.icons.filled.Usb
+import androidx.compose.material.icons.filled.SdStorage
 import androidx.compose.material.icons.filled.ViewModule
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonGroupDefaults
@@ -83,6 +90,7 @@ import com.kerneldroid.karchiver.data.elevation.ShizukuEngine
 import com.kerneldroid.karchiver.data.elevation.ShizukuEngine.ShizukuStatus
 import com.kerneldroid.karchiver.presentation.components.RoundedTopScaffold
 import com.kerneldroid.karchiver.presentation.components.detectBarHold
+import com.kerneldroid.karchiver.data.storage.AppVolume
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -121,7 +129,15 @@ fun SettingsScreen(
     repo: SettingsRepository,
     onBack: () -> Unit,
     barLifted: Boolean = false,
-    onToggleBar: () -> Unit = {}
+    onToggleBar: () -> Unit = {},
+    safAutoFallback: Boolean = true,
+    onSetSafAutoFallback: (Boolean) -> Unit = {},
+    safGrants: Map<String, Uri> = emptyMap(),
+    storageVolumes: List<AppVolume> = emptyList(),
+    forcedSaf: Set<String> = emptySet(),
+    onForgetGrant: (String) -> Unit = {},
+    onSetForceSaf: (String, Boolean) -> Unit = { _, _ -> },
+    onGrantPicked: (Uri, String) -> Unit = { _, _ -> }
 ) {
     BackHandler { onBack() }
     val scope = rememberCoroutineScope()
@@ -450,6 +466,17 @@ fun SettingsScreen(
                     }
                 )
             }
+            SectionHeader("Storage")
+            StorageSection(
+                safAutoFallback = safAutoFallback,
+                onSetSafAutoFallback = onSetSafAutoFallback,
+                safGrants = safGrants,
+                volumes = storageVolumes,
+                forcedSaf = forcedSaf,
+                onForgetGrant = onForgetGrant,
+                onSetForceSaf = onSetForceSaf,
+                onGrantPicked = onGrantPicked
+            )
             SectionHeader("Elevation")
             Column(verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap)) {
                 SegmentedListItem(
@@ -595,6 +622,112 @@ private fun ElevationOption(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+        }
+    }
+}
+
+@Composable
+private fun StorageSection(
+    safAutoFallback: Boolean,
+    onSetSafAutoFallback: (Boolean) -> Unit,
+    safGrants: Map<String, Uri>,
+    volumes: List<AppVolume>,
+    forcedSaf: Set<String>,
+    onForgetGrant: (String) -> Unit,
+    onSetForceSaf: (String, Boolean) -> Unit,
+    onGrantPicked: (Uri, String) -> Unit
+) {
+    var grantTargetId by remember { mutableStateOf<String?>(null) }
+    val treePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        val id = grantTargetId
+        grantTargetId = null
+        if (uri != null && id != null) onGrantPicked(uri, id)
+    }
+    fun labelFor(volumeId: String): String =
+        volumes.firstOrNull { it.id == volumeId }?.label ?: volumeId
+    fun iconFor(volumeId: String): ImageVector {
+        val volume = volumes.firstOrNull { it.id == volumeId }
+        return when {
+            volume == null -> Icons.Filled.SdStorage
+            !volume.isRemovable -> Icons.Filled.Smartphone
+            volume.label.contains("usb", ignoreCase = true) -> Icons.Filled.Usb
+            else -> Icons.Filled.SdStorage
+        }
+    }
+    val ungranted = volumes.filter { it.isRemovable && !safGrants.containsKey(it.id) }
+    val grantRows = safGrants.toList()
+    val count = 2 + grantRows.size + ungranted.size
+    Column(verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap)) {
+        SegmentedListItem(
+            onClick = {},
+            shapes = ListItemDefaults.segmentedShapes(index = 0, count = count),
+            colors = ListItemDefaults.segmentedColors(
+                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+            ),
+            leadingContent = { Icon(Icons.Filled.Storage, null) },
+            supportingContent = {
+                Text("SD card and USB-OTG use direct file access on Android 11+. SAF is only a fallback.")
+            }
+        ) {
+            Text("Native access")
+        }
+        SettingSwitch(
+            index = 1,
+            count = count,
+            title = "Automatic SAF fallback",
+            subtitle = "Use granted folders when direct access fails.",
+            checked = safAutoFallback,
+            onCheckedChange = onSetSafAutoFallback
+        )
+        grantRows.forEachIndexed { offset, (volumeId, _) ->
+            val index = 2 + offset
+            SegmentedListItem(
+                onClick = {},
+                shapes = ListItemDefaults.segmentedShapes(index = index, count = count),
+                colors = ListItemDefaults.segmentedColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                ),
+                leadingContent = { Icon(iconFor(volumeId), null) },
+                supportingContent = { Text("Granted folder. Switch prefers SAF over direct access.") },
+                trailingContent = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Switch(
+                            checked = volumeId in forcedSaf,
+                            onCheckedChange = { onSetForceSaf(volumeId, it) }
+                        )
+                        TextButton(onClick = { onForgetGrant(volumeId) }) { Text("Forget") }
+                    }
+                }
+            ) {
+                Text(labelFor(volumeId), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        ungranted.forEachIndexed { offset, volume ->
+            val index = 2 + grantRows.size + offset
+            SegmentedListItem(
+                onClick = {
+                    grantTargetId = volume.id
+                    treePicker.launch(null)
+                },
+                shapes = ListItemDefaults.segmentedShapes(index = index, count = count),
+                colors = ListItemDefaults.segmentedColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                ),
+                leadingContent = { Icon(iconFor(volume.id), null) },
+                supportingContent = { Text("Direct access preferred. Grant a folder as fallback.") },
+                trailingContent = {
+                    TextButton(
+                        onClick = {
+                            grantTargetId = volume.id
+                            treePicker.launch(null)
+                        }
+                    ) { Text("Grant") }
+                }
+            ) {
+                Text(volume.label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
         }
     }
 }

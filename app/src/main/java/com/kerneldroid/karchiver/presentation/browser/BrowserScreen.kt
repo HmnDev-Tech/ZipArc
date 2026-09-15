@@ -10,6 +10,8 @@ import android.os.Environment
 import android.text.format.Formatter
 import android.content.pm.ResolveInfo
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
@@ -74,6 +76,9 @@ import com.kerneldroid.karchiver.data.normalizeArchiveName
 import com.kerneldroid.karchiver.data.archive.OpKind
 import com.kerneldroid.karchiver.presentation.components.RoundedTopScaffold
 import com.kerneldroid.karchiver.presentation.components.detectBarHold
+import com.kerneldroid.karchiver.data.storage.AppVolume
+import com.kerneldroid.karchiver.presentation.storage.deepestVolumeFor
+import com.kerneldroid.karchiver.presentation.storage.isWithin
 import kotlinx.coroutines.launch
 import java.io.File
 import java.text.SimpleDateFormat
@@ -101,10 +106,40 @@ fun BrowserScreen(
     val verifyActive by vm.verifyActive.collectAsStateWithLifecycle()
     val preview by vm.preview.collectAsStateWithLifecycle()
     val verify by vm.verify.collectAsStateWithLifecycle()
+    val volumes by vm.volumes.collectAsStateWithLifecycle()
+    val grantRequest by vm.grantRequest.collectAsStateWithLifecycle()
     val haptics = LocalHapticFeedback.current
     val context = LocalContext.current
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+
+    var showVolumePicker by rememberSaveable { mutableStateOf(false) }
+    var grantTarget by remember { mutableStateOf<AppVolume?>(null) }
+    val treePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        val target = grantTarget
+        grantTarget = null
+        if (uri != null && target != null) {
+            scope.launch {
+                vm.onTreeGranted(uri, target.id)
+                snackbar.showSnackbar("Access granted for ${target.label}")
+            }
+        }
+    }
+
+    LaunchedEffect(grantRequest) {
+        val requested = grantRequest ?: return@LaunchedEffect
+        val res = snackbar.showSnackbar(
+            "Direct access failed on ${requested.label}",
+            actionLabel = "Grant access"
+        )
+        if (res == SnackbarResult.ActionPerformed) {
+            grantTarget = requested
+            treePicker.launch(null)
+        }
+        vm.dismissGrantRequest()
+    }
 
     var searchActive by rememberSaveable { mutableStateOf(false) }
     var showSortSheet by rememberSaveable { mutableStateOf(false) }
@@ -229,6 +264,7 @@ fun BrowserScreen(
                         canGoUp = vm.canGoUp(),
                         onNavigateUp = { vm.navigateUp() },
                         onOpenDrawer = onOpenDrawer,
+                        onOpenVolumes = { showVolumePicker = true },
                         onToggleSearch = { searchActive = true },
                         onOpenSort = { showSortSheet = true },
                         showProgress = activeOp != null && !dialogVisible,
@@ -240,7 +276,12 @@ fun BrowserScreen(
                         progressDeterminate = (activeOp?.total ?: 0L) > 0L,
                         onShowProgress = vm::showProgressDialog
                     )
-                    Breadcrumbs(current = state.currentDir, onNavigate = vm::navigateTo)
+                    Breadcrumbs(
+                        current = state.currentDir,
+                        volumes = volumes,
+                        onNavigate = vm::navigateTo,
+                        onOpenVolumes = { showVolumePicker = true }
+                    )
                 }
             }
             }
@@ -366,6 +407,15 @@ fun BrowserScreen(
 
     if (showSortSheet) {
         SortSheet(state = state, vm = vm, onDismiss = { showSortSheet = false })
+    }
+
+    if (showVolumePicker) {
+        VolumePickerDialog(
+            current = state.currentDir,
+            volumes = volumes,
+            onPick = { vm.switchVolume(it); showVolumePicker = false },
+            onDismiss = { showVolumePicker = false }
+        )
     }
 
     propsFile?.let { file ->
@@ -785,12 +835,77 @@ private fun CreateFabMenu(onCreateFolder: () -> Unit, onCreateFile: () -> Unit) 
 }
 
 @Composable
+private fun VolumePickerDialog(
+    current: File,
+    volumes: List<AppVolume>,
+    onPick: (AppVolume) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { Icon(Icons.Filled.Storage, null) },
+        title = { Text("Storage volumes") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (volumes.isEmpty()) {
+                    Text(
+                        "No volumes found",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                volumes.forEach { volume ->
+                    val selected = current.isWithin(volume.root)
+                    ListItem(
+                        supportingContent = {
+                            Text(
+                                volume.root.absolutePath,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        },
+                        leadingContent = {
+                            Icon(
+                                if (volume.isPrimary) Icons.Filled.Smartphone
+                                else if (volume.label.contains("usb", ignoreCase = true)) Icons.Filled.Usb
+                                else Icons.Filled.SdStorage,
+                                null
+                            )
+                        },
+                        trailingContent = {
+                            if (selected) Icon(Icons.Filled.Check, null)
+                        },
+                        colors = ListItemDefaults.colors(
+                            containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer
+                            else Color.Transparent
+                        ),
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .combinedClickable(onClick = { onPick(volume) })
+                    ) {
+                        Text(
+                            volume.label,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Close") }
+        }
+    )
+}
+
+@Composable
 private fun BrowserTopBar(
     current: File,
     itemCount: Int,
     canGoUp: Boolean,
     onNavigateUp: () -> Unit,
     onOpenDrawer: () -> Unit,
+    onOpenVolumes: () -> Unit = {},
     onToggleSearch: () -> Unit,
     onOpenSort: () -> Unit,
     showProgress: Boolean = false,
@@ -804,7 +919,12 @@ private fun BrowserTopBar(
             scrolledContainerColor = Color.Transparent
         ),
         title = {
-            Column {
+            Column(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .combinedClickable(onClick = onOpenVolumes)
+                    .padding(end = 8.dp)
+            ) {
                 Text(
                     text = current.name.ifEmpty { "/" },
                     style = MaterialTheme.typography.titleLarge,
@@ -910,8 +1030,13 @@ private fun SelectionTopBar(count: Int, onClose: () -> Unit, onSelectAll: () -> 
 }
 
 @Composable
-private fun Breadcrumbs(current: File, onNavigate: (File) -> Unit) {
-    val segments = remember(current) { ancestorsOf(current) }
+private fun Breadcrumbs(
+    current: File,
+    volumes: List<AppVolume> = emptyList(),
+    onNavigate: (File) -> Unit,
+    onOpenVolumes: () -> Unit = {}
+) {
+    val segments = remember(current, volumes) { ancestorsOf(current, volumes) }
     if (segments.size <= 1) return
     val scroll = rememberScrollState()
     LaunchedEffect(current.absolutePath) { scroll.scrollTo(scroll.maxValue) }
@@ -931,6 +1056,7 @@ private fun Breadcrumbs(current: File, onNavigate: (File) -> Unit) {
                 )
             }
             val isCurrent = index == segments.lastIndex
+            val isRoot = index == 0
             Text(
                 text = label,
                 style = MaterialTheme.typography.labelMedium,
@@ -938,7 +1064,10 @@ private fun Breadcrumbs(current: File, onNavigate: (File) -> Unit) {
                 else MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier
                     .clip(RoundedCornerShape(8.dp))
-                    .combinedClickable(enabled = !isCurrent, onClick = { onNavigate(file) })
+                    .combinedClickable(
+                        enabled = !isCurrent || isRoot,
+                        onClick = { if (isRoot) onOpenVolumes() else onNavigate(file) }
+                    )
                     .padding(horizontal = 6.dp, vertical = 4.dp)
             )
         }
@@ -1489,8 +1618,11 @@ private fun EmptyState(query: String) {
     }
 }
 
-private fun ancestorsOf(current: File): List<Pair<File, String>> {
-    val root = Environment.getExternalStorageDirectory()
+private fun ancestorsOf(current: File, volumes: List<AppVolume> = emptyList()): List<Pair<File, String>> {
+    val internalRoot = Environment.getExternalStorageDirectory()
+    val volumeRoot = deepestVolumeFor(current, volumes)
+    val root = volumeRoot?.root ?: internalRoot
+    val rootLabel = volumeRoot?.label ?: "Internal storage"
     val stack = ArrayDeque<File>()
     var f: File? = current
     while (f != null && f.absolutePath.length >= root.absolutePath.length) {
@@ -1500,7 +1632,7 @@ private fun ancestorsOf(current: File): List<Pair<File, String>> {
     }
     return stack.map { file ->
         file to when {
-            file.absolutePath == root.absolutePath -> "Internal storage"
+            file.absolutePath == root.absolutePath -> rootLabel
             file.parentFile == null -> "/"
             else -> file.name
         }

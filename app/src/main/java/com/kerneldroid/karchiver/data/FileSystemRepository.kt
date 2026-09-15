@@ -10,6 +10,8 @@ import com.kerneldroid.karchiver.data.elevation.ElevatedFS
 import com.kerneldroid.karchiver.data.elevation.RootEngine
 import com.kerneldroid.karchiver.data.elevation.ShizukuEngine
 import com.kerneldroid.karchiver.data.elevation.requireCaps
+import com.kerneldroid.karchiver.data.storage.AppVolume
+import com.kerneldroid.karchiver.data.storage.SafBridge
 
 data class FileItem(
     val file: File,
@@ -120,6 +122,20 @@ data class TestReport(
 class FileSystemRepository {
 
     var tempDir: File? = null
+    var safBridge: SafBridge? = null
+    var safVolumes: List<AppVolume> = emptyList()
+    var safAutoFallback: Boolean = true
+    var safPreferredVolumes: Set<String> = emptySet()
+
+    private suspend fun useSafFirst(dir: File): Boolean {
+        if (!safAutoFallback) return false
+        val bridge = safBridge ?: return false
+        return try {
+            bridge.safFirstReady(dir, safVolumes, safPreferredVolumes)
+        } catch (_: Exception) {
+            false
+        }
+    }
 
     suspend fun listDir(
         path: File,
@@ -129,7 +145,10 @@ class FileSystemRepository {
         elevated: ElevatedFS? = null
     ): List<FileItem> = withContext(Dispatchers.IO) {
         val listed = path.listFiles()
-        val raw = listed?.map { FileItem(it) }
+        val safFirst = useSafFirst(path)
+        val raw = (if (safFirst) safItemsFor(path) else null)
+            ?: listed?.map { FileItem(it) }
+            ?: (if (!safFirst) safItemsFor(path) else null)
             ?: elevated?.listDetailed(path)?.map { entry ->
                 FileItem(
                     file = entry.file,
@@ -153,9 +172,16 @@ class FileSystemRepository {
 
     suspend fun delete(files: List<File>, elevated: ElevatedFS? = null): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
-            val failed = files.filter { it.exists() && !deleteSingle(it) }
+            val safTargets = files.filter { it.exists() && useSafFirst(it) }
+            if (safTargets.isNotEmpty() && !trySafDelete(safTargets)) error("Delete failed")
+            val rest = files.filter { it !in safTargets }
+            val failed = rest.filter { it.exists() && !deleteSingle(it) }
             if (failed.isEmpty()) return@runCatching
             if (elevated == null || !elevated.deleteRecursively(failed)) error("Delete failed")
+        }.recoverCatching { e ->
+            val failed = files.filter { it.exists() }
+            if (failed.isEmpty()) return@recoverCatching
+            if (!trySafDelete(failed)) throw e
         }
     }
 
@@ -164,12 +190,13 @@ class FileSystemRepository {
 
     suspend fun createDirectory(parent: File, name: String, elevated: ElevatedFS? = null): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
+            if (useSafFirst(parent) && trySafMakeDir(parent, name)) return@runCatching
             val dir = File(parent, name)
             if (dir.exists()) error("Already exists")
             if (!dir.mkdirs()) error("Could not create directory")
-        }.recoverCatching {
-            if (elevated == null) throw it
-            if (!elevated.mkdirs(File(parent, name))) error("Could not create directory")
+        }.recoverCatching { e ->
+            if (elevated != null && elevated.mkdirs(File(parent, name))) return@recoverCatching
+            if (!trySafMakeDir(parent, name)) throw e
         }
     }
 
@@ -242,47 +269,177 @@ class FileSystemRepository {
 
     suspend fun createFile(parent: File, name: String): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
+            if (useSafFirst(parent) && trySafCreateFile(parent, name)) return@runCatching
             val file = File(parent, name)
             if (file.exists()) error("Already exists")
             if (!file.createNewFile()) error("Could not create file")
+        }.recoverCatching { e ->
+            if (!trySafCreateFile(parent, name)) throw e
         }
     }
 
     suspend fun copy(sources: List<File>, destDir: File): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
-            destDir.mkdirs()
-            sources.forEach { src ->
-                val dst = File(destDir, src.name)
-                if (src.isDirectory) src.copyRecursively(dst, overwrite = true)
-                else Files.copy(src.toPath(), dst.toPath(), StandardCopyOption.REPLACE_EXISTING)
-            }
+            if (useSafFirst(destDir) && trySafCopy(sources, destDir, move = false)) return@runCatching
+            nativeCopy(sources, destDir)
+        }.recoverCatching { e ->
+            if (!trySafCopy(sources, destDir, move = false)) throw e
         }
     }
 
     suspend fun cut(sources: List<File>, destDir: File): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
-            copy(sources, destDir).getOrThrow()
-            delete(sources).getOrThrow()
+            if (useSafFirst(destDir) && trySafCopy(sources, destDir, move = true)) return@runCatching
+            nativeCopy(sources, destDir)
+            nativeDelete(sources)
+        }.recoverCatching { e ->
+            if (!trySafCopy(sources, destDir, move = true)) throw e
+        }
+    }
+
+    private fun nativeCopy(sources: List<File>, destDir: File) {
+        destDir.mkdirs()
+        sources.forEach { src ->
+            val dst = File(destDir, src.name)
+            if (src.isDirectory) {
+                if (!src.copyRecursively(dst, overwrite = true)) error("Copy failed")
+            } else {
+                Files.copy(src.toPath(), dst.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            }
+        }
+    }
+
+    private fun nativeDelete(sources: List<File>) {
+        val failed = sources.filter { it.exists() && !deleteSingle(it) }
+        if (failed.isNotEmpty()) error("Delete failed")
+    }
+
+    private suspend fun safItemsFor(dir: File): List<FileItem>? {
+        if (!safAutoFallback) return null
+        val bridge = safBridge ?: return null
+        return try {
+            bridge.itemsFor(dir, safVolumes)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private suspend fun trySafDelete(files: List<File>): Boolean {
+        if (!safAutoFallback) return false
+        val bridge = safBridge ?: return false
+        return try {
+            bridge.deleteTargets(files, safVolumes)
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private suspend fun trySafMakeDir(parent: File, name: String): Boolean {
+        if (!safAutoFallback) return false
+        val bridge = safBridge ?: return false
+        return try {
+            bridge.makeDir(parent, name, safVolumes)
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private suspend fun trySafCreateFile(parent: File, name: String): Boolean {
+        if (!safAutoFallback) return false
+        val bridge = safBridge ?: return false
+        return try {
+            bridge.createFile(parent, name, safVolumes)
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private suspend fun trySafCopy(sources: List<File>, destDir: File, move: Boolean): Boolean {
+        if (!safAutoFallback) return false
+        val bridge = safBridge ?: return false
+        return try {
+            bridge.copyInTree(sources, destDir, move, safVolumes)
+        } catch (_: Exception) {
+            false
         }
     }
 
     suspend fun compress(sources: List<File>, dest: File, format: CompressFormat = CompressFormat.ZIP, password: String? = null): Result<Unit> = withContext(Dispatchers.IO) {
-        runCatching {
-            val fixed = File(dest.parentFile, normalizeArchiveName(dest.name, format))
+        val fixed = File(dest.parentFile, normalizeArchiveName(dest.name, format))
+        val bridge = if (safAutoFallback) safBridge else null
+        val tmp = tempDir
+        var stagingRoot: File? = null
+        var effectiveSources = sources
+        var outFile = fixed
+        var destViaSaf = false
+        if (bridge != null && tmp != null) {
+            try {
+                if (sources.any { bridge.needsStaging(it) }) {
+                    tmp.mkdirs()
+                    stagingRoot = File(tmp, "saf-compress-" + System.nanoTime()).apply { mkdirs() }
+                    val root = stagingRoot
+                    val staged = ArrayList<File>(sources.size)
+                    var stagedOk = true
+                    for (src in sources) {
+                        if (!bridge.needsStaging(src)) {
+                            staged.add(src)
+                            continue
+                        }
+                        val one = bridge.stageInTree(src, safVolumes, root)
+                        if (one == null) {
+                            stagedOk = false
+                            break
+                        }
+                        staged.add(one)
+                    }
+                    if (stagedOk) effectiveSources = staged
+                }
+                val destParent = fixed.parentFile
+                if (destParent != null && !destParent.canWrite() && bridge.hasGrantFor(destParent, safVolumes)) {
+                    if (stagingRoot == null) {
+                        tmp.mkdirs()
+                        stagingRoot = File(tmp, "saf-compress-" + System.nanoTime()).apply { mkdirs() }
+                    }
+                    outFile = File(stagingRoot, fixed.name)
+                    destViaSaf = true
+                }
+            } catch (_: Exception) {
+                effectiveSources = sources
+                outFile = fixed
+                destViaSaf = false
+            }
+        }
+        val result = runCatching {
             if (!RustBridge.isLoaded()) {
                 if (!password.isNullOrEmpty()) error("Password protection requires the native engine")
                 if (format != CompressFormat.ZIP) error("Native engine required for " + format.label)
-                fallbackZip(sources, fixed)
+                fallbackZip(effectiveSources, outFile)
             } else {
-                val srcPaths = sources.map { it.absolutePath }.toTypedArray()
+                val srcPaths = effectiveSources.map { it.absolutePath }.toTypedArray()
                 val code = if (password.isNullOrEmpty()) {
-                    RustBridge.compress(srcPaths, fixed.absolutePath)
+                    RustBridge.compress(srcPaths, outFile.absolutePath)
                 } else {
-                    RustBridge.compressWithPassword(srcPaths, fixed.absolutePath, password)
+                    RustBridge.compressWithPassword(srcPaths, outFile.absolutePath, password)
                 }
                 if (code != 0) error("Rust compress failed code=$code")
             }
         }
+        val final = if (result.isSuccess && destViaSaf) {
+            val destParent = fixed.parentFile
+            val pushed = if (bridge == null || destParent == null) false else try {
+                bridge.copyInTree(listOf(outFile), destParent, false, safVolumes)
+            } catch (_: Exception) {
+                false
+            }
+            if (pushed) Result.success(Unit) else Result.failure(Exception("Could not write file"))
+        } else {
+            result
+        }
+        try {
+            stagingRoot?.deleteRecursively()
+        } catch (_: Exception) {
+        }
+        final
     }
 
     suspend fun extract(
@@ -295,9 +452,50 @@ class FileSystemRepository {
         runCatching {
             normalExtract(archive, destDir, password)
         }.recoverCatching { e ->
+            if (trySafExtract(archive, destDir, password)) return@recoverCatching
             val eng = elevated ?: throw e
             if (archive.canRead()) throw e
             extractElevated(archive, destDir, password, eng, elevationMode).getOrThrow()
+        }
+    }
+
+    private suspend fun trySafExtract(archive: File, destDir: File, password: String?): Boolean {
+        if (!safAutoFallback) return false
+        val bridge = safBridge ?: return false
+        val tmp = tempDir ?: return false
+        return try {
+            tmp.mkdirs()
+            val staging = File(tmp, "saf-extract-" + System.nanoTime())
+            staging.mkdirs()
+            if (!staging.isDirectory) return false
+            try {
+                val effective = bridge.stageArchiveIn(archive, safVolumes, staging) ?: archive
+                if (destDir.canWrite()) {
+                    try {
+                        normalExtract(effective, destDir, password)
+                        true
+                    } catch (_: Exception) {
+                        false
+                    }
+                } else {
+                    val work = File(staging, "out")
+                    work.mkdirs()
+                    if (!work.isDirectory) return false
+                    try {
+                        normalExtract(effective, work, password)
+                    } catch (_: Exception) {
+                        return false
+                    }
+                    !bridge.stageExtractOut(work, destDir, safVolumes)
+                }
+            } finally {
+                try {
+                    staging.deleteRecursively()
+                } catch (_: Exception) {
+                }
+            }
+        } catch (_: Exception) {
+            false
         }
     }
 

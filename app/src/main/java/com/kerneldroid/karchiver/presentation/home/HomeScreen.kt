@@ -1,6 +1,7 @@
 package com.kerneldroid.karchiver.presentation.home
 
 import android.os.Environment
+import android.os.StatFs
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -26,6 +27,7 @@ import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.SdStorage
+import androidx.compose.material.icons.filled.Usb
 import androidx.compose.material.icons.filled.VideoFile
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Card
@@ -63,6 +65,8 @@ import com.kerneldroid.karchiver.data.formatBytes
 import com.kerneldroid.karchiver.data.loadVolumeStats
 import com.kerneldroid.karchiver.presentation.components.RoundedTopScaffold
 import com.kerneldroid.karchiver.presentation.components.detectBarHold
+import com.kerneldroid.karchiver.data.storage.AppVolume
+import com.kerneldroid.karchiver.data.storage.loadAppVolumes
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -88,6 +92,15 @@ fun HomeScreen(
     }
     val volumes by produceState(initialValue = emptyList<VolumeStats>(), context) {
         value = withContext(Dispatchers.IO) { loadVolumeStats(context.applicationContext) }
+    }
+    val appVolumes by produceState(initialValue = emptyList<AppVolume>(), context) {
+        value = withContext(Dispatchers.IO) { loadAppVolumes(context.applicationContext) }
+    }
+    val mergedVolumes = remember(volumes, appVolumes) {
+        val known = volumes.map { it.path }.toSet()
+        volumes + appVolumes
+            .filter { it.root.absolutePath !in known }
+            .mapNotNull { statOfVolume(it.label, it.root) }
     }
 
     RoundedTopScaffold(
@@ -119,8 +132,8 @@ fun HomeScreen(
             item {
                 SectionHeader("Storage")
             }
-            items(volumes, key = { it.path }) { stats ->
-                StorageCard(stats = stats)
+            items(mergedVolumes, key = { it.path }) { stats ->
+                StorageCard(stats = stats, onClick = { onOpenPath(stats.path) })
             }
             item {
                 SectionHeader("Recent folders")
@@ -193,9 +206,19 @@ private fun folderLabel(file: File): String {
     return file.name.ifEmpty { file.absolutePath }
 }
 
+private fun statOfVolume(label: String, root: File): VolumeStats? {
+    return try {
+        if (!root.exists()) return null
+        val stat = StatFs(root.absolutePath)
+        VolumeStats(label, root.absolutePath, stat.availableBytes, stat.totalBytes)
+    } catch (_: Exception) {
+        VolumeStats(label, root.absolutePath, 0L, 0L)
+    }
+}
+
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-private fun StorageCard(stats: VolumeStats) {
+private fun StorageCard(stats: VolumeStats, onClick: () -> Unit) {
     val progress by animateFloatAsState(
         targetValue = stats.usedFraction,
         animationSpec = ProgressIndicatorDefaults.ProgressAnimationSpec,
@@ -204,9 +227,16 @@ private fun StorageCard(stats: VolumeStats) {
     val lowSpace = stats.totalBytes > 0 && stats.freeBytes < stats.totalBytes * 0.1
     val progressColor = if (lowSpace) MaterialTheme.colorScheme.error
     else MaterialTheme.colorScheme.primary
-    val isSd = !stats.path.startsWith(Environment.getExternalStorageDirectory().absolutePath)
+    val isUsb = stats.label.contains("usb", ignoreCase = true)
+    val isSd = isUsb || !stats.path.startsWith(Environment.getExternalStorageDirectory().absolutePath)
+    val icon = when {
+        isUsb -> Icons.Filled.Usb
+        isSd -> Icons.Filled.SdStorage
+        else -> Icons.Filled.Save
+    }
 
     Card(
+        onClick = onClick,
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.secondaryContainer,
@@ -217,7 +247,7 @@ private fun StorageCard(stats: VolumeStats) {
     ) {
         Box(modifier = Modifier.fillMaxWidth()) {
             Icon(
-                if (isSd) Icons.Filled.SdStorage else Icons.Filled.Save,
+                icon,
                 null,
                 tint = MaterialTheme.colorScheme.primary,
                 modifier = Modifier

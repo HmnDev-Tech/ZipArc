@@ -26,7 +26,8 @@ data class AppSettings(
     val confirmDelete: Boolean = true,
     val rarEnabled: Boolean = false,
     val rarWriteEnabled: Boolean = false,
-    val elevationMode: String = "off"
+    val elevationMode: String = "off",
+    val safAutoFallback: Boolean = true
 )
 
 class SettingsRepository(private val appContext: Context) {
@@ -50,6 +51,7 @@ class SettingsRepository(private val appContext: Context) {
         val RAR_ENABLED = booleanPreferencesKey("rar_enabled")
         val ELEVATION_MODE = stringPreferencesKey("elevation_mode")
         val RAR_WRITE_ENABLED = booleanPreferencesKey("rar_write_enabled")
+        val SAF_AUTO_FALLBACK = booleanPreferencesKey("saf_auto_fallback")
     }
 
     val recentFolders: Flow<List<String>> = appContext.dataStore.data.map { p ->
@@ -87,7 +89,8 @@ class SettingsRepository(private val appContext: Context) {
             confirmDelete = p[Keys.CONFIRM_DELETE] ?: true,
             rarEnabled = p[Keys.RAR_ENABLED] ?: false,
             rarWriteEnabled = p[Keys.RAR_WRITE_ENABLED] ?: false,
-            elevationMode = p[Keys.ELEVATION_MODE] ?: "off"
+            elevationMode = p[Keys.ELEVATION_MODE] ?: "off",
+            safAutoFallback = p[Keys.SAF_AUTO_FALLBACK] ?: true
         )
     }
 
@@ -140,4 +143,7 @@ class SettingsRepository(private val appContext: Context) {
 
     suspend fun setElevationMode(value: String) =
         appContext.dataStore.edit { it[Keys.ELEVATION_MODE] = value }
+
+    suspend fun setSafAutoFallback(value: Boolean) =
+        appContext.dataStore.edit { it[Keys.SAF_AUTO_FALLBACK] = value }
 }
