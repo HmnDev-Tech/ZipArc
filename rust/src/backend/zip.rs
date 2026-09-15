@@ -10,8 +10,8 @@ use crate::backend::{PreviewEntry, PreviewListing, TestFailure, TestReport};
 use crate::error::{ArchiveError, Result, classify_io};
 use crate::io_util::{
     AtomicFile, LimitState, LimitedReader, Limits, check_cancelled, create_dir_all_checked,
-    create_output_file, log_warn, progress_reset, reject_symlink_ancestors, safe_join,
-    safe_link_target, set_file_mode,
+    create_output_file, log_warn, progress_add, progress_reset, reject_symlink_ancestors,
+    safe_join, safe_link_target, sanitize_entry_name, set_file_mode,
 };
 use ::zip::read::ZipFile;
 use ::zip::result::ZipError;
@@ -691,4 +691,569 @@ fn test_entries<R: Read + Seek>(
         failures,
         password_required: false,
     })
+}
+
+fn trim_name(value: &str) -> String {
+    let t = value.trim_end_matches('/');
+    t.to_string()
+}
+
+fn entry_matches(entry: &str, target: &str) -> bool {
+    let e = entry.trim_end_matches('/');
+    let t = target.trim_end_matches('/');
+    if t.is_empty() {
+        return false;
+    }
+    e == t || e.starts_with(&format!("{t}/"))
+}
+
+fn normalize_targets(names: &[String]) -> Result<Vec<String>> {
+    let mut out = Vec::with_capacity(names.len());
+    for n in names {
+        let s = sanitize_entry_name(n)?;
+        if s.is_empty() {
+            return Err(ArchiveError::invalid("empty entry name"));
+        }
+        out.push(trim_name(&s));
+    }
+    Ok(out)
+}
+
+fn normalize_dest_dir(dest_dir: &str) -> Result<String> {
+    let t = dest_dir.trim().replace('\\', "/");
+    let t = t.trim_matches('/').to_string();
+    if t.is_empty() {
+        return Ok(String::new());
+    }
+    let s = sanitize_entry_name(&t)?;
+    Ok(trim_name(&s))
+}
+
+struct AddSource {
+    name: String,
+    path: PathBuf,
+    is_dir: bool,
+}
+
+fn collect_add_sources(sources: &[PathBuf], dest_dir: &str) -> Result<Vec<AddSource>> {
+    let prefix = normalize_dest_dir(dest_dir)?;
+    let mut out: Vec<AddSource> = Vec::new();
+    for src in sources {
+        check_cancelled()?;
+        let md = std::fs::symlink_metadata(src)?;
+        if md.file_type().is_symlink() {
+            log_warn(format!("skipping symlink source: {}", src.display()));
+            continue;
+        }
+        if md.is_dir() {
+            let base = src.parent().unwrap_or_else(|| Path::new(""));
+            for entry in walkdir::WalkDir::new(src)
+                .follow_links(false)
+                .sort_by_file_name()
+            {
+                check_cancelled()?;
+                let entry = entry.map_err(|e| {
+                    let io_err = e
+                        .into_io_error()
+                        .unwrap_or_else(|| io::Error::other("walk error"));
+                    ArchiveError::Io(io_err)
+                })?;
+                let path = entry.path();
+                let ft = entry.file_type();
+                if ft.is_symlink() {
+                    log_warn(format!("skipping symlink: {}", path.display()));
+                    continue;
+                }
+                let rel = path.strip_prefix(base).map_err(|e| {
+                    ArchiveError::invalid(format!("cannot relativise {}: {e}", path.display()))
+                })?;
+                let rel_name = sanitize_entry_name(&rel.to_string_lossy())?;
+                let rel_name = trim_name(&rel_name);
+                let full = if prefix.is_empty() {
+                    rel_name
+                } else {
+                    format!("{prefix}/{rel_name}")
+                };
+                out.push(AddSource {
+                    name: full,
+                    path: path.to_path_buf(),
+                    is_dir: ft.is_dir(),
+                });
+            }
+        } else if md.is_file() {
+            let file_name = src
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .ok_or_else(|| ArchiveError::invalid("source has no file name"))?;
+            let file_name = sanitize_entry_name(&file_name)?;
+            let file_name = trim_name(&file_name);
+            let full = if prefix.is_empty() {
+                file_name
+            } else {
+                format!("{prefix}/{file_name}")
+            };
+            out.push(AddSource {
+                name: full,
+                path: src.clone(),
+                is_dir: false,
+            });
+        } else {
+            log_warn(format!("skipping non-file source: {}", src.display()));
+        }
+    }
+    if out.is_empty() {
+        return Err(ArchiveError::invalid("no files to add"));
+    }
+    Ok(out)
+}
+
+fn ensure_plain_no_split(archive: &Path) -> Result<()> {
+    if resolve_split_segments(archive)?.is_some() {
+        return Err(ArchiveError::Unsupported(
+            "Editing split archives is not supported".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn open_for_edit(archive: &Path, password: Option<&[u8]>) -> Result<ZipArchive<BufReader<File>>> {
+    let file = File::open(archive)?;
+    let mut zip = ZipArchive::new(BufReader::new(file)).map_err(map_open_err)?;
+    let len = zip.len();
+    for i in 0..len {
+        let entry = zip.by_index_raw(i).map_err(ArchiveError::backend)?;
+        if entry.encrypted() && password.is_none_or(|p| p.is_empty()) {
+            return Err(ArchiveError::password_required(
+                "archive requires a password",
+            ));
+        }
+    }
+    Ok(zip)
+}
+
+fn write_file_entry<R: Read + Seek>(
+    writer: &mut ZipWriter<BufWriter<File>>,
+    name: &str,
+    src: &mut ZipFile<'_, R>,
+    mode: Option<u32>,
+    compression: CompressionMethod,
+    password: Option<&[u8]>,
+) -> Result<()> {
+    check_cancelled()?;
+    match password {
+        Some(pw) if !pw.is_empty() => {
+            let mut opts = SimpleFileOptions::default()
+                .compression_method(CompressionMethod::Deflated)
+                .large_file(true)
+                .with_aes_encryption_bytes(AesMode::Aes256, pw);
+            if let Some(m) = mode {
+                opts = opts.unix_permissions(m);
+            } else {
+                opts = opts.unix_permissions(0o644);
+            }
+            writer
+                .start_file(name.to_string(), opts)
+                .map_err(ArchiveError::backend)?;
+        }
+        _ => {
+            let mut opts = SimpleFileOptions::default()
+                .compression_method(compression)
+                .large_file(true);
+            if let Some(m) = mode {
+                opts = opts.unix_permissions(m);
+            } else {
+                opts = opts.unix_permissions(0o644);
+            }
+            writer
+                .start_file(name.to_string(), opts)
+                .map_err(ArchiveError::backend)?;
+        }
+    }
+    io::copy(src, writer).map_err(classify_io)?;
+    Ok(())
+}
+
+pub fn delete_entries(archive: &Path, names: &[String], password: Option<&[u8]>) -> Result<()> {
+    ensure_plain_no_split(archive)?;
+    let targets = normalize_targets(names)?;
+    if targets.is_empty() {
+        return Ok(());
+    }
+    let pw = password.filter(|p| !p.is_empty());
+    let mut zip = open_for_edit(archive, pw)?;
+    let total = zip.len();
+    progress_reset(total as u64);
+    let af = AtomicFile::new(archive)?;
+    let out_file = File::options()
+        .write(true)
+        .create_new(true)
+        .open(af.path())?;
+    let mut writer = ZipWriter::new(BufWriter::new(out_file));
+    for i in 0..total {
+        check_cancelled()?;
+        let raw = zip.by_index_raw(i).map_err(ArchiveError::backend)?;
+        let name = raw.name().to_string();
+        let is_dir = raw.is_dir();
+        let mode = raw.unix_mode();
+        let compression = raw.compression();
+        let encrypted = raw.encrypted();
+        drop(raw);
+        let drop_entry = targets.iter().any(|t| entry_matches(&name, t));
+        progress_add(1);
+        if drop_entry {
+            if encrypted {
+                let mut e = open_entry(&mut zip, i, pw)?;
+                let mut sink = io::sink();
+                let _ = io::copy(&mut e, &mut sink);
+            }
+            continue;
+        }
+        if is_dir {
+            writer
+                .add_directory(trim_name(&name), dir_options())
+                .map_err(ArchiveError::backend)?;
+            continue;
+        }
+        let mut entry = open_entry(&mut zip, i, pw)?;
+        write_file_entry(&mut writer, &name, &mut entry, mode, compression, pw)?;
+    }
+    let buffered = writer.finish().map_err(ArchiveError::backend)?;
+    buffered
+        .into_inner()
+        .map_err(|e| ArchiveError::Io(e.into_error()))?;
+    af.commit()
+}
+
+pub fn rename_entry(archive: &Path, from: &str, to: &str, password: Option<&[u8]>) -> Result<()> {
+    ensure_plain_no_split(archive)?;
+    let from_s = trim_name(&sanitize_entry_name(from)?);
+    let to_s = trim_name(&sanitize_entry_name(to)?);
+    if from_s.is_empty() || to_s.is_empty() {
+        return Err(ArchiveError::invalid("empty entry name"));
+    }
+    if from_s == to_s {
+        return Ok(());
+    }
+    if to_s == from_s || to_s.starts_with(&format!("{from_s}/")) {
+        return Err(ArchiveError::invalid(format!(
+            "cannot rename '{from_s}' onto '{to_s}'"
+        )));
+    }
+    let pw = password.filter(|p| !p.is_empty());
+    let mut zip = open_for_edit(archive, pw)?;
+    let total = zip.len();
+    let mut existing: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut from_found = false;
+    for i in 0..total {
+        let e = zip.by_index_raw(i).map_err(ArchiveError::backend)?;
+        let n = trim_name(e.name());
+        existing.insert(n.clone());
+        if entry_matches(e.name(), &from_s) {
+            from_found = true;
+        }
+    }
+    if !from_found {
+        return Err(ArchiveError::invalid(format!("entry '{from_s}' not found")));
+    }
+    let outside: std::collections::HashSet<String> = existing
+        .iter()
+        .filter(|n| !entry_matches(n, &from_s))
+        .cloned()
+        .collect();
+    for i in 0..total {
+        let e = zip.by_index_raw(i).map_err(ArchiveError::backend)?;
+        let n = trim_name(e.name());
+        if entry_matches(e.name(), &from_s) {
+            let rest = n[from_s.len()..].to_string();
+            let candidate = format!("{to_s}{rest}");
+            if outside.contains(&candidate) {
+                return Err(ArchiveError::invalid(format!(
+                    "entry '{candidate}' already exists"
+                )));
+            }
+        }
+    }
+    if outside.contains(&to_s) {
+        return Err(ArchiveError::invalid(format!(
+            "entry '{to_s}' already exists"
+        )));
+    }
+    progress_reset(total as u64);
+    let af = AtomicFile::new(archive)?;
+    let out_file = File::options()
+        .write(true)
+        .create_new(true)
+        .open(af.path())?;
+    let mut writer = ZipWriter::new(BufWriter::new(out_file));
+    for i in 0..total {
+        check_cancelled()?;
+        let raw = zip.by_index_raw(i).map_err(ArchiveError::backend)?;
+        let name = raw.name().to_string();
+        let is_dir = raw.is_dir();
+        let mode = raw.unix_mode();
+        let compression = raw.compression();
+        drop(raw);
+        progress_add(1);
+        let new_name = if entry_matches(&name, &from_s) {
+            let trimmed = trim_name(&name);
+            let rest = trimmed[from_s.len()..].to_string();
+            format!("{to_s}{rest}")
+        } else {
+            name.clone()
+        };
+        if is_dir {
+            writer
+                .add_directory(trim_name(&new_name), dir_options())
+                .map_err(ArchiveError::backend)?;
+            continue;
+        }
+        let mut entry = open_entry(&mut zip, i, pw)?;
+        write_file_entry(&mut writer, &new_name, &mut entry, mode, compression, pw)?;
+    }
+    let buffered = writer.finish().map_err(ArchiveError::backend)?;
+    buffered
+        .into_inner()
+        .map_err(|e| ArchiveError::Io(e.into_error()))?;
+    af.commit()
+}
+
+pub fn add_files(
+    archive: &Path,
+    sources: &[PathBuf],
+    dest_dir: &str,
+    password: Option<&[u8]>,
+) -> Result<()> {
+    ensure_plain_no_split(archive)?;
+    let pw = password.filter(|p| !p.is_empty());
+    let additions = collect_add_sources(sources, dest_dir)?;
+    let mut zip = open_for_edit(archive, pw)?;
+    let total = zip.len();
+    let mut existing: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for i in 0..total {
+        let e = zip.by_index_raw(i).map_err(ArchiveError::backend)?;
+        existing.insert(trim_name(e.name()));
+    }
+    let mut add_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for a in &additions {
+        add_names.insert(trim_name(&a.name));
+    }
+    let mut need_dirs: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for a in &additions {
+        let t = trim_name(&a.name);
+        let mut parts: Vec<&str> = t.split('/').collect();
+        parts.pop();
+        let mut cur = String::new();
+        for p in parts {
+            if !cur.is_empty() {
+                cur.push('/');
+            }
+            cur.push_str(p);
+            if !existing.contains(&cur) && !add_names.contains(&cur) {
+                need_dirs.insert(cur.clone());
+            }
+        }
+    }
+    progress_reset((total + additions.len() + need_dirs.len()) as u64);
+    let af = AtomicFile::new(archive)?;
+    let out_file = File::options()
+        .write(true)
+        .create_new(true)
+        .open(af.path())?;
+    let mut writer = ZipWriter::new(BufWriter::new(out_file));
+    for i in 0..total {
+        check_cancelled()?;
+        let raw = zip.by_index_raw(i).map_err(ArchiveError::backend)?;
+        let name = raw.name().to_string();
+        let is_dir = raw.is_dir();
+        let mode = raw.unix_mode();
+        let compression = raw.compression();
+        drop(raw);
+        progress_add(1);
+        if add_names.contains(&trim_name(&name)) {
+            continue;
+        }
+        if is_dir {
+            writer
+                .add_directory(trim_name(&name), dir_options())
+                .map_err(ArchiveError::backend)?;
+            continue;
+        }
+        let mut entry = open_entry(&mut zip, i, pw)?;
+        write_file_entry(&mut writer, &name, &mut entry, mode, compression, pw)?;
+    }
+    let mut ordered_dirs: Vec<String> = need_dirs.into_iter().collect();
+    ordered_dirs.sort();
+    for d in ordered_dirs {
+        check_cancelled()?;
+        writer
+            .add_directory(d.clone(), dir_options())
+            .map_err(ArchiveError::backend)?;
+        progress_add(1);
+    }
+    let mut ordered_add: Vec<&AddSource> = additions.iter().collect();
+    ordered_add.sort_by(|a, b| a.name.cmp(&b.name));
+    for a in ordered_add {
+        check_cancelled()?;
+        if a.is_dir {
+            if !existing.contains(&trim_name(&a.name)) {
+                let _ = writer.add_directory(trim_name(&a.name), dir_options());
+            }
+            progress_add(1);
+            continue;
+        }
+        match pw {
+            Some(p) => {
+                writer
+                    .start_file(a.name.clone(), file_options_encrypted(p))
+                    .map_err(ArchiveError::backend)?;
+            }
+            None => {
+                writer
+                    .start_file(a.name.clone(), file_options())
+                    .map_err(ArchiveError::backend)?;
+            }
+        }
+        let f = File::open(&a.path)?;
+        let mut reader = BufReader::new(f);
+        io::copy(&mut reader, &mut writer).map_err(classify_io)?;
+        progress_add(1);
+    }
+    let buffered = writer.finish().map_err(ArchiveError::backend)?;
+    buffered
+        .into_inner()
+        .map_err(|e| ArchiveError::Io(e.into_error()))?;
+    af.commit()
+}
+
+#[cfg(test)]
+mod edit_tests {
+    use super::*;
+    use crate::backend::list_detailed;
+    use crate::format::Format;
+    use tempfile::tempdir;
+
+    fn make_zip(dir: &Path, name: &str) -> PathBuf {
+        let src = dir.join("src");
+        std::fs::create_dir_all(src.join("mydir/sub")).unwrap();
+        std::fs::write(src.join("a.txt"), b"aaa").unwrap();
+        std::fs::write(src.join("mydir/b.txt"), b"bbb").unwrap();
+        std::fs::write(src.join("mydir/sub/c.txt"), b"ccc").unwrap();
+        let dest = dir.join(name);
+        crate::backend::compress(
+            std::slice::from_ref(&src),
+            &dest,
+            Format::Zip,
+            &Limits::default(),
+        )
+        .unwrap();
+        dest
+    }
+
+    fn names_of(archive: &Path) -> Vec<String> {
+        let listing = list_detailed(archive, Format::Zip).unwrap();
+        let mut v: Vec<String> = listing.entries.iter().map(|e| e.name.clone()).collect();
+        v.sort();
+        v
+    }
+
+    fn has_entry(archive: &Path, suffix: &str) -> bool {
+        names_of(archive).iter().any(|n| n.ends_with(suffix))
+    }
+
+    #[test]
+    fn delete_file() {
+        let dir = tempdir().unwrap();
+        let archive = make_zip(dir.path(), "t.zip");
+        crate::backend::delete_entries(&archive, Format::Zip, &["src/a.txt".to_string()]).unwrap();
+        assert!(!has_entry(&archive, "a.txt"));
+        assert!(has_entry(&archive, "b.txt"));
+    }
+
+    #[test]
+    fn delete_dir_subtree() {
+        let dir = tempdir().unwrap();
+        let archive = make_zip(dir.path(), "t.zip");
+        crate::backend::delete_entries(&archive, Format::Zip, &["src/mydir".to_string()]).unwrap();
+        let names = names_of(&archive);
+        assert!(names.iter().all(|n| !n.contains("mydir")));
+        assert!(has_entry(&archive, "a.txt"));
+    }
+
+    #[test]
+    fn rename_file() {
+        let dir = tempdir().unwrap();
+        let archive = make_zip(dir.path(), "t.zip");
+        crate::backend::rename_entry(&archive, Format::Zip, "src/a.txt", "src/z.txt").unwrap();
+        assert!(!has_entry(&archive, "a.txt"));
+        assert!(has_entry(&archive, "z.txt"));
+    }
+
+    #[test]
+    fn rename_dir() {
+        let dir = tempdir().unwrap();
+        let archive = make_zip(dir.path(), "t.zip");
+        crate::backend::rename_entry(&archive, Format::Zip, "src/mydir", "src/renamed").unwrap();
+        assert!(has_entry(&archive, "renamed/b.txt"));
+        assert!(has_entry(&archive, "renamed/sub/c.txt"));
+        assert!(!names_of(&archive).iter().any(|n| n.contains("mydir")));
+    }
+
+    #[test]
+    fn rename_collision_errors() {
+        let dir = tempdir().unwrap();
+        let archive = make_zip(dir.path(), "t.zip");
+        let r = crate::backend::rename_entry(&archive, Format::Zip, "src/a.txt", "src/mydir/b.txt");
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn add_files_nested() {
+        let dir = tempdir().unwrap();
+        let archive = make_zip(dir.path(), "t.zip");
+        let extra = dir.path().join("extra");
+        std::fs::create_dir_all(extra.join("nest")).unwrap();
+        std::fs::write(extra.join("new.txt"), b"new").unwrap();
+        std::fs::write(extra.join("nest/deep.txt"), b"deep").unwrap();
+        crate::backend::add_files(&archive, Format::Zip, &[extra], "added").unwrap();
+        assert!(has_entry(&archive, "added/extra/new.txt"));
+        assert!(has_entry(&archive, "added/extra/nest/deep.txt"));
+        assert!(has_entry(&archive, "a.txt"));
+    }
+
+    #[test]
+    fn password_roundtrip_edit() {
+        let dir = tempdir().unwrap();
+        let src = dir.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("a.txt"), b"secret").unwrap();
+        let dest = dir.path().join("p.zip");
+        crate::backend::compress_with_password(
+            &[src],
+            &dest,
+            Format::Zip,
+            &Limits::default(),
+            "pw123",
+        )
+        .unwrap();
+        crate::backend::delete_entries_with_password(
+            &dest,
+            Format::Zip,
+            &["src/a.txt".to_string()],
+            b"pw123",
+        )
+        .unwrap();
+        let listing = list_detailed(&dest, Format::Zip).unwrap();
+        assert!(listing.entries.iter().all(|e| !e.name.ends_with("a.txt")));
+    }
+
+    #[test]
+    fn unsupported_rar_edit() {
+        let dir = tempdir().unwrap();
+        let fake = dir.path().join("x.rar");
+        std::fs::write(&fake, b"rar").unwrap();
+        let r = crate::backend::delete_entries(&fake, Format::Rar, &["a".to_string()]);
+        assert!(matches!(r, Err(ArchiveError::Unsupported(_))));
+        let r2 = crate::backend::rename_entry(&fake, Format::Rar, "a", "b");
+        assert!(matches!(r2, Err(ArchiveError::Unsupported(_))));
+    }
 }

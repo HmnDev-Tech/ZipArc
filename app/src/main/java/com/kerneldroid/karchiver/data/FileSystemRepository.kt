@@ -825,6 +825,91 @@ class FileSystemRepository {
             }
         }
     }
+
+    suspend fun deleteArchiveEntries(archive: File, names: List<String>, password: String?): Result<Unit> = withContext(Dispatchers.IO) {
+        if (names.isEmpty()) return@withContext Result.success(Unit)
+        runCatching {
+            if (!archive.isFile || !archive.canWrite()) error("Editing requires a writable local file")
+            if (isRarArchive(archive)) error("Editing RAR archives is not supported")
+            if (password.isNullOrEmpty()) {
+                RustBridge.deleteArchiveEntries(archive.absolutePath, names.toTypedArray())
+            } else {
+                RustBridge.deleteArchiveEntriesWithPassword(archive.absolutePath, names.toTypedArray(), password)
+            }
+        }
+    }
+
+    suspend fun renameArchiveEntry(archive: File, from: String, to: String, password: String?): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            if (!archive.isFile || !archive.canWrite()) error("Editing requires a writable local file")
+            if (isRarArchive(archive)) error("Editing RAR archives is not supported")
+            if (password.isNullOrEmpty()) {
+                RustBridge.renameArchiveEntry(archive.absolutePath, from, to)
+            } else {
+                RustBridge.renameArchiveEntryWithPassword(archive.absolutePath, from, to, password)
+            }
+        }
+    }
+
+    suspend fun addFilesToArchive(archive: File, sources: List<File>, destDir: String, password: String?): Result<Unit> = withContext(Dispatchers.IO) {
+        if (sources.isEmpty()) return@withContext Result.success(Unit)
+        runCatching {
+            if (!archive.isFile || !archive.canWrite()) error("Editing requires a writable local file")
+            if (isRarArchive(archive)) error("Editing RAR archives is not supported")
+            val srcPaths = sources.map { it.absolutePath }.toTypedArray()
+            if (password.isNullOrEmpty()) {
+                RustBridge.addFilesToArchive(archive.absolutePath, srcPaths, destDir)
+            } else {
+                RustBridge.addFilesToArchiveWithPassword(archive.absolutePath, srcPaths, destDir, password)
+            }
+        }
+    }
+
+    suspend fun extractArchiveEntries(archive: File, names: List<String>, destDir: File, password: String?): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            if (!archive.isFile || !archive.canWrite()) error("Editing requires a writable local file")
+            if (names.isEmpty()) return@runCatching
+            for (entryName in names) {
+                if (entryName.split("/").contains("..")) error("Invalid entry path")
+            }
+            destDir.mkdirs()
+            val base = tempDir?.takeIf { it.exists() || it.mkdirs() } ?: destDir.parentFile ?: File(System.getProperty("java.io.tmpdir") ?: "/tmp")
+            base.mkdirs()
+            val staging = File(base, "karchiver-entries-" + System.nanoTime())
+            staging.mkdirs()
+            try {
+                if (RustBridge.isLoaded()) {
+                    val code = if (password.isNullOrEmpty()) {
+                        RustBridge.extract(archive.absolutePath, staging.absolutePath)
+                    } else {
+                        RustBridge.extractWithPassword(archive.absolutePath, staging.absolutePath, password)
+                    }
+                    if (code != 0) error("Rust extract failed code=$code")
+                } else {
+                    fallbackUnzip(archive, staging)
+                }
+                for (entryName in names) {
+                    val trimmed = entryName.trim().trimStart('/')
+                    if (trimmed.isEmpty()) error("Invalid entry path")
+                    if (trimmed.split("/").contains("..")) error("Invalid entry path")
+                    val src = File(staging, trimmed)
+                    if (!src.exists()) error("Entry not found: $trimmed")
+                    val dst = File(destDir, trimmed)
+                    if (src.isDirectory) {
+                        if (!src.copyRecursively(dst, overwrite = true)) error("Copy failed")
+                    } else {
+                        dst.parentFile?.mkdirs()
+                        Files.copy(src.toPath(), dst.toPath(), StandardCopyOption.REPLACE_EXISTING)
+                    }
+                }
+            } finally {
+                try {
+                    staging.deleteRecursively()
+                } catch (_: Exception) {
+                }
+            }
+        }
+    }
 }
 
 object RustBridge {
@@ -846,6 +931,12 @@ object RustBridge {
     @JvmStatic external fun listArchiveDetailedWithPasswordFd(fd: Int, password: String): String
     @JvmStatic external fun testArchiveFd(fd: Int): String
     @JvmStatic external fun testArchiveWithPasswordFd(fd: Int, password: String): String
+    @JvmStatic external fun deleteArchiveEntries(archivePath: String, names: Array<String>)
+    @JvmStatic external fun deleteArchiveEntriesWithPassword(archivePath: String, names: Array<String>, password: String)
+    @JvmStatic external fun renameArchiveEntry(archivePath: String, from: String, to: String)
+    @JvmStatic external fun renameArchiveEntryWithPassword(archivePath: String, from: String, to: String, password: String)
+    @JvmStatic external fun addFilesToArchive(archivePath: String, srcPaths: Array<String>, destDir: String)
+    @JvmStatic external fun addFilesToArchiveWithPassword(archivePath: String, srcPaths: Array<String>, destDir: String, password: String)
     @JvmStatic external fun getProgress(): LongArray
     @JvmStatic external fun cancel()
 }

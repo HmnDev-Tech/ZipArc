@@ -475,3 +475,21 @@ fn test_impl(archive: &Path, limits: &Limits, password: Option<&str>) -> Result<
         password_required: false,
     })
 }
+
+pub fn delete_entries(_archive: &Path, _names: &[String]) -> Result<()> {
+    Err(ArchiveError::Unsupported(
+        "Editing 7z archives is not supported".to_string(),
+    ))
+}
+
+pub fn rename_entry(_archive: &Path, _from: &str, _to: &str) -> Result<()> {
+    Err(ArchiveError::Unsupported(
+        "Editing 7z archives is not supported".to_string(),
+    ))
+}
+
+pub fn add_files(_archive: &Path, _sources: &[PathBuf], _dest_dir: &str) -> Result<()> {
+    Err(ArchiveError::Unsupported(
+        "Editing 7z archives is not supported".to_string(),
+    ))
+}

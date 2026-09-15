@@ -317,3 +317,162 @@ pub fn test_archive_with_password(
         other => reject_password(other, "verification"),
     }
 }
+
+pub fn delete_entries(archive: &Path, format: Format, names: &[String]) -> Result<()> {
+    match format {
+        Format::Zip => zip::delete_entries(archive, names, None),
+        f if f.is_tar() => tar::delete_entries(archive, f, names),
+        Format::SevenZ => sevenz::delete_entries(archive, names),
+        Format::Rar => Err(ArchiveError::Unsupported(
+            "Editing RAR archives is not supported".to_string(),
+        )),
+        f if f.is_single_stream() => Err(ArchiveError::Unsupported(format!(
+            "Editing {} archives is not supported",
+            f.label()
+        ))),
+        other => Err(ArchiveError::Unsupported(format!(
+            "Editing {} archives is not supported",
+            other.label()
+        ))),
+    }
+}
+
+pub fn rename_entry(archive: &Path, format: Format, from: &str, to: &str) -> Result<()> {
+    match format {
+        Format::Zip => zip::rename_entry(archive, from, to, None),
+        f if f.is_tar() => tar::rename_entry(archive, f, from, to),
+        Format::SevenZ => sevenz::rename_entry(archive, from, to),
+        Format::Rar => Err(ArchiveError::Unsupported(
+            "Editing RAR archives is not supported".to_string(),
+        )),
+        f if f.is_single_stream() => Err(ArchiveError::Unsupported(format!(
+            "Editing {} archives is not supported",
+            f.label()
+        ))),
+        other => Err(ArchiveError::Unsupported(format!(
+            "Editing {} archives is not supported",
+            other.label()
+        ))),
+    }
+}
+
+pub fn add_files(
+    archive: &Path,
+    format: Format,
+    sources: &[PathBuf],
+    dest_dir: &str,
+) -> Result<()> {
+    match format {
+        Format::Zip => zip::add_files(archive, sources, dest_dir, None),
+        f if f.is_tar() => tar::add_files(archive, f, sources, dest_dir),
+        Format::SevenZ => sevenz::add_files(archive, sources, dest_dir),
+        Format::Rar => Err(ArchiveError::Unsupported(
+            "Editing RAR archives is not supported".to_string(),
+        )),
+        f if f.is_single_stream() => Err(ArchiveError::Unsupported(format!(
+            "Editing {} archives is not supported",
+            f.label()
+        ))),
+        other => Err(ArchiveError::Unsupported(format!(
+            "Editing {} archives is not supported",
+            other.label()
+        ))),
+    }
+}
+
+fn edit_password(password: &[u8]) -> Option<&[u8]> {
+    if password.is_empty() {
+        None
+    } else {
+        Some(password)
+    }
+}
+
+pub fn delete_entries_with_password(
+    archive: &Path,
+    format: Format,
+    names: &[String],
+    password: &[u8],
+) -> Result<()> {
+    match format {
+        Format::Zip => zip::delete_entries(archive, names, edit_password(password)),
+        f if f.is_tar() => Err(ArchiveError::Unsupported(format!(
+            "Password-protected editing of {} archives is not supported",
+            f.label()
+        ))),
+        Format::SevenZ => Err(ArchiveError::Unsupported(
+            "Password-protected editing of 7z archives is not supported".to_string(),
+        )),
+        Format::Rar => Err(ArchiveError::Unsupported(
+            "Editing RAR archives is not supported".to_string(),
+        )),
+        f if f.is_single_stream() => Err(ArchiveError::Unsupported(format!(
+            "Editing {} archives is not supported",
+            f.label()
+        ))),
+        other => Err(ArchiveError::Unsupported(format!(
+            "Editing {} archives is not supported",
+            other.label()
+        ))),
+    }
+}
+
+pub fn rename_entry_with_password(
+    archive: &Path,
+    format: Format,
+    from: &str,
+    to: &str,
+    password: &[u8],
+) -> Result<()> {
+    match format {
+        Format::Zip => zip::rename_entry(archive, from, to, edit_password(password)),
+        f if f.is_tar() => Err(ArchiveError::Unsupported(format!(
+            "Password-protected editing of {} archives is not supported",
+            f.label()
+        ))),
+        Format::SevenZ => Err(ArchiveError::Unsupported(
+            "Password-protected editing of 7z archives is not supported".to_string(),
+        )),
+        Format::Rar => Err(ArchiveError::Unsupported(
+            "Editing RAR archives is not supported".to_string(),
+        )),
+        f if f.is_single_stream() => Err(ArchiveError::Unsupported(format!(
+            "Editing {} archives is not supported",
+            f.label()
+        ))),
+        other => Err(ArchiveError::Unsupported(format!(
+            "Editing {} archives is not supported",
+            other.label()
+        ))),
+    }
+}
+
+pub fn add_files_with_password(
+    archive: &Path,
+    format: Format,
+    sources: &[PathBuf],
+    dest_dir: &str,
+    password: &[u8],
+) -> Result<()> {
+    match format {
+        Format::Zip => zip::add_files(archive, sources, dest_dir, edit_password(password)),
+        f if f.is_tar() => Err(ArchiveError::Unsupported(format!(
+            "Password-protected editing of {} archives is not supported",
+            f.label()
+        ))),
+        Format::SevenZ => Err(ArchiveError::Unsupported(
+            "Password-protected editing of 7z archives is not supported".to_string(),
+        )),
+        Format::Rar => Err(ArchiveError::Unsupported(
+            "Editing RAR archives is not supported".to_string(),
+        )),
+        f if f.is_single_stream() => Err(ArchiveError::Unsupported(format!(
+            "Editing {} archives is not supported",
+            f.label()
+        ))),
+        other => Err(ArchiveError::Unsupported(format!(
+            "Editing {} archives is not supported",
+            other.label()
+        ))),
+    }
+}
