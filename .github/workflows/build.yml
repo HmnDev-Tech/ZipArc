@@ -24,19 +24,36 @@ jobs:
           cache: gradle
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK 37 and NDK
         run: |
-          set +e
-          yes | sdkmanager --licenses > /dev/null 2>&1 || true
-          sdkmanager --install "platforms;android-37" "build-tools;37.0.0" "ndk;28.2.13676358" 2>&1 || true
-          sdkmanager --install "platforms;android-37" --channel=3 2>&1 || true
-          sdkmanager --install "platforms;android-CinnamonBun" 2>&1 || true
-          sdkmanager --install "platforms;android-36" "build-tools;36.0.0" 2>&1 || true
-          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/28.2.13676358" >> "$GITHUB_ENV"
-          sdkmanager --list_installed | tail -n 30 || true
           set -e
+          if [ -x /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager ]; then
+            SDK=/usr/local/lib/android/sdk
+          else
+            sudo apt-get update -qq && sudo apt-get install -y -qq unzip > /dev/null
+            SDK="$HOME/android-sdk"
+            mkdir -p "$SDK/cmdline-tools"
+            curl -sSLo /tmp/cmdtools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+            unzip -q /tmp/cmdtools.zip -d "$SDK/cmdline-tools"
+            mv "$SDK/cmdline-tools/cmdline-tools" "$SDK/cmdline-tools/latest"
+            rm /tmp/cmdtools.zip
+          fi
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$SDK/ndk/28.2.13676358" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$SDK/ndk/28.2.13676358" >> "$GITHUB_ENV"
+          echo "$SDK/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          echo "$SDK/platform-tools" >> "$GITHUB_PATH"
+          export ANDROID_SDK_ROOT="$SDK"
+          export PATH="$SDK/cmdline-tools/latest/bin:$PATH"
+          yes | sdkmanager --licenses > /dev/null
+          sdkmanager --install "platforms;android-37.0"
+          sdkmanager --install "build-tools;37.0.0"
+          sdkmanager --install "ndk;28.2.13676358"
+          # sdkmanager publishes android-37.0 but AGP resolves compileSdk 37 as android-37
+          test -d "$SDK/platforms/android-37.0" || { echo "ERROR: platforms;android-37.0 failed to install into $SDK/platforms" >&2; exit 1; }
+          [ -e "$SDK/platforms/android-37" ] || ln -s android-37.0 "$SDK/platforms/android-37"
+          test -d "$SDK/platforms/android-37" || { echo "ERROR: SDK platform android-37 missing in $SDK/platforms" >&2; exit 1; }
+          ls -d "$SDK"/build-tools/37* > /dev/null || { echo "ERROR: build-tools 37.x missing in $SDK/build-tools" >&2; exit 1; }
+          test -d "$SDK/ndk/28.2.13676358" || { echo "ERROR: NDK 28.2.13676358 missing in $SDK/ndk" >&2; exit 1; }
 
       - name: Install Rust 1.90
         uses: dtolnay/rust-toolchain@1.90.0
