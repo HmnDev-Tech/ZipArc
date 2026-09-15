@@ -13,6 +13,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -54,9 +55,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -244,19 +247,22 @@ fun BrowserScreen(
                     onToggleBar()
                 }
             ) {
-            if (searchActive) {
-                SearchTopBar(
-                    query = state.query,
-                    onQueryChange = vm::setQuery,
-                    onClose = { searchActive = false; vm.setQuery("") }
-                )
-            } else if (state.isSelectionMode) {
+            if (state.isSelectionMode) {
                 SelectionTopBar(
                     count = state.selected.size,
                     onClose = vm::clearSelection,
                     onSelectAll = vm::selectAll
                 )
             } else {
+                val scheme = MaterialTheme.motionScheme
+                Box {
+                    AnimatedVisibility(
+                        visible = !searchActive,
+                        enter = fadeIn(scheme.defaultEffectsSpec()) +
+                            slideInVertically(scheme.fastSpatialSpec()) { it / 4 },
+                        exit = fadeOut(scheme.defaultEffectsSpec()) +
+                            slideOutVertically(scheme.fastSpatialSpec()) { -it / 4 }
+                    ) {
                 Column {
                     BrowserTopBar(
                         current = state.currentDir,
@@ -282,6 +288,21 @@ fun BrowserScreen(
                         onNavigate = vm::navigateTo,
                         onOpenVolumes = { showVolumePicker = true }
                     )
+                    }
+                    }
+                    AnimatedVisibility(
+                        visible = searchActive,
+                        enter = fadeIn(scheme.defaultEffectsSpec()) +
+                            slideInVertically(scheme.fastSpatialSpec()) { -it / 4 },
+                        exit = fadeOut(scheme.defaultEffectsSpec()) +
+                            slideOutVertically(scheme.fastSpatialSpec()) { it / 4 }
+                    ) {
+                        FileSearchField(
+                            query = state.query,
+                            onQueryChange = vm::setQuery,
+                            onClose = { searchActive = false; vm.setQuery("") }
+                        )
+                    }
                 }
             }
             }
@@ -976,40 +997,48 @@ private fun BrowserTopBar(
 }
 
 @Composable
-private fun SearchTopBar(query: String, onQueryChange: (String) -> Unit, onClose: () -> Unit) {
+private fun FileSearchField(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    onClose: () -> Unit
+) {
     val focusRequester = remember { FocusRequester() }
+    val focusManager = LocalFocusManager.current
+    var focused by remember { mutableStateOf(false) }
+    val sidePadding by animateDpAsState(
+        targetValue = if (focused) 12.dp else 24.dp,
+        label = "searchFocusGrow"
+    )
     LaunchedEffect(Unit) { focusRequester.requestFocus() }
-    TopAppBar(
-        colors = TopAppBarDefaults.topAppBarColors(
-            containerColor = Color.Transparent,
-            scrolledContainerColor = Color.Transparent
-        ),
-        navigationIcon = {
-            IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
-        },
-        title = {
-            TextField(
-                value = query,
-                onValueChange = onQueryChange,
-                placeholder = { Text("Search files and archives...") },
-                leadingIcon = { Icon(Icons.Filled.Search, null) },
+    SearchBar(
+        inputField = {
+            SearchBarDefaults.InputField(
+                query = query,
+                onQueryChange = onQueryChange,
+                onSearch = { focusManager.clearFocus() },
+                expanded = false,
+                onExpandedChange = {},
+                modifier = Modifier
+                    .focusRequester(focusRequester)
+                    .onFocusChanged { focused = it.isFocused },
+                placeholder = { Text("Search files") },
+                leadingIcon = {
+                    IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
+                },
                 trailingIcon = {
                     if (query.isNotEmpty()) {
-                        IconButton(onClick = { onQueryChange("") }) { Icon(Icons.Filled.Close, null) }
+                        IconButton(onClick = { onQueryChange("") }) { Icon(Icons.Filled.Close, "Clear") }
                     }
-                },
-                singleLine = true,
-                colors = TextFieldDefaults.colors(
-                    focusedContainerColor = Color.Transparent,
-                    unfocusedContainerColor = Color.Transparent,
-                    focusedIndicatorColor = Color.Transparent,
-                    unfocusedIndicatorColor = Color.Transparent,
-                    disabledIndicatorColor = Color.Transparent
-                ),
-                modifier = Modifier.fillMaxWidth().focusRequester(focusRequester)
+                }
             )
-        }
-    )
+        },
+        expanded = false,
+        onExpandedChange = {},
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = sidePadding, vertical = 4.dp)
+    ) {
+    }
 }
 
 @Composable

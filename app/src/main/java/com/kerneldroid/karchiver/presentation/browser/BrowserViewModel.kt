@@ -24,6 +24,8 @@ import com.kerneldroid.karchiver.data.elevation.ShizukuEngine
 import com.kerneldroid.karchiver.data.isRarArchive
 import com.kerneldroid.karchiver.data.normalizeArchiveName
 import com.kerneldroid.karchiver.data.PreviewListing
+import com.kerneldroid.karchiver.data.search.matchesSearch
+import com.kerneldroid.karchiver.data.search.parseSearchQuery
 import com.kerneldroid.karchiver.data.RustBridge
 import com.kerneldroid.karchiver.data.archive.ActiveOp
 import com.kerneldroid.karchiver.data.archive.ArchiveOpManager
@@ -411,10 +413,11 @@ class BrowserViewModel(
         _state.value = s.copy(isLoading = true)
         _refreshing.value = true
         viewModelScope.launch {
+            val search = parseSearchQuery(s.query)
             val items = repo.listDir(s.currentDir, s.sortBy, s.ascending, s.foldersFirst, elevationEngine())
                 .asSequence()
                 .filter { !s.hideHidden || !it.name.startsWith(".") }
-                .filter { s.query.isBlank() || it.name.contains(s.query, ignoreCase = true) }
+                .filter { search.isEmpty || it.matchesSearch(search) }
                 .toList()
             if (token != loadToken) return@launch
             _state.value = _state.value.copy(
