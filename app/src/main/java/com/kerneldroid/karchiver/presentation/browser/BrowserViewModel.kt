@@ -27,6 +27,7 @@ import com.kerneldroid.karchiver.data.PreviewListing
 import com.kerneldroid.karchiver.data.search.matchesSearch
 import com.kerneldroid.karchiver.data.search.parseSearchQuery
 import com.kerneldroid.karchiver.data.RustBridge
+import com.kerneldroid.karchiver.data.SettingsRepository
 import com.kerneldroid.karchiver.data.archive.ActiveOp
 import com.kerneldroid.karchiver.data.archive.ArchiveOpManager
 import com.kerneldroid.karchiver.data.archive.ArchiveService
@@ -38,6 +39,7 @@ import com.kerneldroid.karchiver.data.storage.SafBridge
 import com.kerneldroid.karchiver.data.storage.SafGrants
 import com.kerneldroid.karchiver.data.storage.loadAppVolumes
 import com.kerneldroid.karchiver.presentation.storage.deepestVolumeFor
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -69,6 +71,7 @@ data class BrowserUiState(
     val ascending: Boolean = true,
     val viewMode: ViewMode = ViewMode.LIST,
     val query: String = "",
+    val favorites: Set<String> = emptySet(),
     val hideHidden: Boolean = false,
     val foldersFirst: Boolean = true,
     val rarEnabled: Boolean = false,
@@ -130,6 +133,22 @@ class BrowserViewModel(
     val verify: StateFlow<VerifyUiState> = _verify
 
     private var previewToken = 0
+
+    private var settingsRepo: SettingsRepository? = null
+    private var favoritesJob: Job? = null
+
+    fun bindFavorites(repo: SettingsRepository) {
+        settingsRepo = repo
+        favoritesJob?.cancel()
+        favoritesJob = viewModelScope.launch {
+            repo.favorites.collect { favs ->
+                _state.value = _state.value.copy(favorites = favs)
+            }
+        }
+    }
+
+    suspend fun toggleFavorite(path: String): Boolean =
+        settingsRepo?.toggleFavorite(path) ?: false
 
     fun openPreview(file: File, password: String = "") {
         if (isRarArchive(file) && !_state.value.rarEnabled) {

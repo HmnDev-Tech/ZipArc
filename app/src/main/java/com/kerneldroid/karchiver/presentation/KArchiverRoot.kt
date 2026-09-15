@@ -4,11 +4,14 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -16,10 +19,16 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.SdStorage
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Smartphone
 import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ModalDrawerSheet
@@ -51,6 +60,9 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.kerneldroid.karchiver.data.AppSettings
 import com.kerneldroid.karchiver.data.SettingsRepository
+import com.kerneldroid.karchiver.data.formatBytes
+import com.kerneldroid.karchiver.data.loadVolumeStats
+import com.kerneldroid.karchiver.data.storage.AppVolume
 import com.kerneldroid.karchiver.presentation.browser.BrowserScreen
 import com.kerneldroid.karchiver.presentation.browser.BrowserViewModel
 import com.kerneldroid.karchiver.presentation.browser.ViewMode
@@ -65,6 +77,62 @@ private object RootRoute {
     const val BROWSER = "browser"
     const val HOME = "home"
     const val SETTINGS = "settings"
+}
+
+@Composable
+private fun DrawerSectionLabel(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(start = 28.dp, top = 12.dp, bottom = 4.dp)
+    )
+}
+
+@Composable
+private fun DeviceDrawerRow(
+    volume: AppVolume,
+    usedBytes: Long?,
+    totalBytes: Long?,
+    onClick: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 28.dp, vertical = 8.dp)
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Icon(
+                if (volume.isPrimary) Icons.Filled.Smartphone else Icons.Filled.SdStorage,
+                null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                text = volume.label,
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+        }
+        if (usedBytes != null && totalBytes != null && totalBytes > 0) {
+            Text(
+                text = "${formatBytes(usedBytes)} used of ${formatBytes(totalBytes)}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 6.dp)
+            )
+            LinearProgressIndicator(
+                progress = { (usedBytes.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f) },
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+            )
+        }
+    }
 }
 
 @Composable
@@ -93,6 +161,7 @@ fun KArchiverRoot() {
     val safGrants by vm.safGrants.collectAsStateWithLifecycle()
     val forcedSaf by vm.forcedSaf.collectAsStateWithLifecycle()
     val safAutoFallback by vm.safAutoFallback.collectAsStateWithLifecycle()
+    val favorites by settingsRepo.favorites.collectAsStateWithLifecycle(initialValue = emptySet())
 
     val destinations = remember {
         listOf(
@@ -114,6 +183,20 @@ fun KArchiverRoot() {
             restoreState = true
         }
         drawerScope.launch { drawerState.close() }
+    }
+
+    fun openFavorite(path: String) {
+        haptics.performHapticFeedback(HapticFeedbackType.SegmentFrequentTick)
+        val parent = File(path).parentFile
+        if (parent == null || !parent.exists()) {
+            drawerScope.launch {
+                settingsRepo.removeFavorite(path)
+                drawerState.close()
+            }
+        } else {
+            vm.navigateTo(parent)
+            selectDestination(RootRoute.BROWSER)
+        }
     }
 
     LaunchedEffect(settings) {
@@ -155,6 +238,7 @@ fun KArchiverRoot() {
 
     LaunchedEffect(Unit) {
         vm.setTempDir(context.cacheDir)
+        vm.bindFavorites(settingsRepo)
     }
 
     LaunchedEffect(browserState.currentDir.absolutePath, ready) {
@@ -178,6 +262,51 @@ fun KArchiverRoot() {
                         icon = destination.icon,
                         text = destination.label
                     )
+                }
+                if (favorites.isNotEmpty()) {
+                    DrawerSectionLabel("Favorites")
+                    val favFiles = remember(favorites) { favorites.map { File(it) } }
+                    val favDirs = favFiles.filter { it.isDirectory }.sortedBy { it.name.lowercase() }
+                    val favRest = (favFiles - favDirs.toSet()).sortedBy { it.name.lowercase() }
+                    favDirs.forEach { f ->
+                        CustomNavigationDrawerItem(
+                            selected = false,
+                            onSelected = { openFavorite(f.absolutePath) },
+                            icon = Icons.Filled.Folder,
+                            text = f.name.ifEmpty { f.absolutePath }
+                        )
+                    }
+                    if (favDirs.isNotEmpty() && favRest.isNotEmpty()) {
+                        HorizontalDivider(modifier = Modifier.padding(horizontal = 28.dp, vertical = 4.dp))
+                    }
+                    favRest.forEach { f ->
+                        CustomNavigationDrawerItem(
+                            selected = false,
+                            onSelected = { openFavorite(f.absolutePath) },
+                            icon = Icons.AutoMirrored.Filled.InsertDriveFile,
+                            text = f.name.ifEmpty { f.absolutePath }
+                        )
+                    }
+                }
+                if (settings?.seeDevicesInUi == true && storageVolumes.isNotEmpty()) {
+                    HorizontalDivider(modifier = Modifier.padding(horizontal = 28.dp, vertical = 4.dp))
+                    DrawerSectionLabel("Devices")
+                    val stats = remember(storageVolumes) {
+                        loadVolumeStats(context).associateBy { it.path }
+                    }
+                    storageVolumes.forEach { v ->
+                        val stat = stats[v.root.absolutePath]
+                        DeviceDrawerRow(
+                            volume = v,
+                            usedBytes = stat?.usedBytes,
+                            totalBytes = stat?.totalBytes,
+                            onClick = {
+                                haptics.performHapticFeedback(HapticFeedbackType.SegmentFrequentTick)
+                                vm.switchVolume(v)
+                                selectDestination(RootRoute.BROWSER)
+                            }
+                        )
+                    }
                 }
             }
         }

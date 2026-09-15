@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -27,7 +28,8 @@ data class AppSettings(
     val rarEnabled: Boolean = false,
     val rarWriteEnabled: Boolean = false,
     val elevationMode: String = "off",
-    val safAutoFallback: Boolean = true
+    val safAutoFallback: Boolean = true,
+    val seeDevicesInUi: Boolean = false
 )
 
 class SettingsRepository(private val appContext: Context) {
@@ -52,6 +54,26 @@ class SettingsRepository(private val appContext: Context) {
         val ELEVATION_MODE = stringPreferencesKey("elevation_mode")
         val RAR_WRITE_ENABLED = booleanPreferencesKey("rar_write_enabled")
         val SAF_AUTO_FALLBACK = booleanPreferencesKey("saf_auto_fallback")
+        val SEE_DEVICES_IN_UI = booleanPreferencesKey("see_devices_in_ui")
+        val FAVORITES = stringSetPreferencesKey("favorite_paths")
+    }
+
+    val favorites: Flow<Set<String>> = appContext.dataStore.data.map { p ->
+        p[Keys.FAVORITES]?.filter { it.isNotEmpty() }?.toSet() ?: emptySet()
+    }
+
+    suspend fun toggleFavorite(path: String): Boolean {
+        var added = false
+        appContext.dataStore.edit { p ->
+            val current = p[Keys.FAVORITES] ?: emptySet()
+            added = !current.contains(path)
+            p[Keys.FAVORITES] = if (added) current + path else current - path
+        }
+        return added
+    }
+
+    suspend fun removeFavorite(path: String) = appContext.dataStore.edit { p ->
+        p[Keys.FAVORITES] = (p[Keys.FAVORITES] ?: emptySet()) - path
     }
 
     val recentFolders: Flow<List<String>> = appContext.dataStore.data.map { p ->
@@ -90,7 +112,8 @@ class SettingsRepository(private val appContext: Context) {
             rarEnabled = p[Keys.RAR_ENABLED] ?: false,
             rarWriteEnabled = p[Keys.RAR_WRITE_ENABLED] ?: false,
             elevationMode = p[Keys.ELEVATION_MODE] ?: "off",
-            safAutoFallback = p[Keys.SAF_AUTO_FALLBACK] ?: true
+            safAutoFallback = p[Keys.SAF_AUTO_FALLBACK] ?: true,
+            seeDevicesInUi = p[Keys.SEE_DEVICES_IN_UI] ?: false
         )
     }
 
@@ -146,4 +169,7 @@ class SettingsRepository(private val appContext: Context) {
 
     suspend fun setSafAutoFallback(value: Boolean) =
         appContext.dataStore.edit { it[Keys.SAF_AUTO_FALLBACK] = value }
+
+    suspend fun setSeeDevicesInUi(value: Boolean) =
+        appContext.dataStore.edit { it[Keys.SEE_DEVICES_IN_UI] = value }
 }

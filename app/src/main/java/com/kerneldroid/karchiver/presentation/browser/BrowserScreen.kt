@@ -82,6 +82,8 @@ import com.kerneldroid.karchiver.presentation.components.detectBarHold
 import com.kerneldroid.karchiver.data.storage.AppVolume
 import com.kerneldroid.karchiver.presentation.storage.deepestVolumeFor
 import com.kerneldroid.karchiver.presentation.storage.isWithin
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
 import java.text.SimpleDateFormat
@@ -91,6 +93,7 @@ import java.util.Locale
 private enum class CreateKind { FOLDER, FILE }
 
 private const val SCROLL_TOP_JUMP_THRESHOLD = 12
+private const val TRIPLE_TAP_WINDOW_MILLIS = 450L
 
 @Composable
 fun BrowserScreen(
@@ -174,8 +177,7 @@ fun BrowserScreen(
         }
     }
 
-    val handleItemClick: (FileItem) -> Unit = { item ->
-        haptics.performHapticFeedback(HapticFeedbackType.VirtualKey)
+    fun openItem(item: FileItem) {
         when {
             state.isSelectionMode -> vm.toggleSelect(item.file.absolutePath)
             item.isDirectory -> vm.navigateTo(item.file)
@@ -187,7 +189,60 @@ fun BrowserScreen(
         }
     }
 
+    var tapCount by remember { mutableStateOf(0) }
+    var tapPath by remember { mutableStateOf<String?>(null) }
+    var tapJob by remember { mutableStateOf<Job?>(null) }
+    var pendingItem by remember { mutableStateOf<FileItem?>(null) }
+    var tapDir by remember { mutableStateOf<String?>(null) }
+
+    fun cancelPendingTap() {
+        tapJob?.cancel()
+        tapJob = null
+        pendingItem = null
+        tapCount = 0
+        tapPath = null
+        tapDir = null
+    }
+
+    val handleItemClick: (FileItem) -> Unit = { item ->
+        if (state.isSelectionMode) {
+            haptics.performHapticFeedback(HapticFeedbackType.VirtualKey)
+            cancelPendingTap()
+            vm.toggleSelect(item.file.absolutePath)
+        } else {
+            val path = item.file.absolutePath
+            if (tapPath == path) tapCount++ else {
+                cancelPendingTap()
+                tapCount = 1
+                tapPath = path
+            }
+            if (tapCount >= 3) {
+                cancelPendingTap()
+                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                scope.launch {
+                    val added = vm.toggleFavorite(path)
+                    snackbar.showSnackbar(if (added) "Added to favorites" else "Removed from favorites")
+                }
+            } else {
+                pendingItem = item
+                tapDir = state.currentDir.absolutePath
+                tapJob?.cancel()
+                tapJob = scope.launch {
+                    delay(TRIPLE_TAP_WINDOW_MILLIS)
+                    val pending = pendingItem
+                    val dir = tapDir
+                    cancelPendingTap()
+                    if (pending != null && dir == vm.state.value.currentDir.absolutePath) {
+                        haptics.performHapticFeedback(HapticFeedbackType.VirtualKey)
+                        openItem(pending)
+                    }
+                }
+            }
+        }
+    }
+
     val handleItemLongClick: (FileItem) -> Unit = { item ->
+        cancelPendingTap()
         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
         vm.toggleSelect(item.file.absolutePath)
     }
@@ -1125,6 +1180,7 @@ internal fun FileList(
                 index = index,
                 count = state.items.size,
                 selected = state.selected.contains(item.file.absolutePath),
+                favorite = state.favorites.contains(item.file.absolutePath),
                 onClick = { onItemClick(item) },
                 onLongClick = { onItemLongClick(item) },
                 modifier = Modifier.animateItem()
@@ -1153,6 +1209,7 @@ internal fun FileGrid(
             FileGridCard(
                 item = item,
                 selected = state.selected.contains(item.file.absolutePath),
+                favorite = state.favorites.contains(item.file.absolutePath),
                 onClick = { onItemClick(item) },
                 onLongClick = { onItemLongClick(item) },
                 modifier = Modifier.animateItem()
@@ -1163,11 +1220,12 @@ internal fun FileGrid(
 }
 
 @Composable
-private fun FileRow(
+internal fun FileRow(
     item: FileItem,
     index: Int,
     count: Int,
     selected: Boolean,
+    favorite: Boolean = false,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     modifier: Modifier = Modifier
@@ -1178,6 +1236,7 @@ private fun FileRow(
         shapes = ListItemDefaults.segmentedShapes(index = index, count = count),
         colors = ListItemDefaults.segmentedColors(
             containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer
+            else if (favorite) MaterialTheme.colorScheme.surfaceContainerHighest
             else MaterialTheme.colorScheme.surfaceContainerHigh
         ),
         modifier = modifier,
@@ -1210,6 +1269,14 @@ private fun FileRow(
                 )
             },
             trailingContent = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (favorite) {
+                        Icon(
+                            Icons.Filled.Star, "Favorite",
+                            tint = MaterialTheme.colorScheme.tertiary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                 when {
                     selected -> Icon(
                         Icons.Filled.CheckCircle, "Selected",
@@ -1219,6 +1286,7 @@ private fun FileRow(
                         Icons.Filled.ChevronRight, null,
                         tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                }
                 }
             }
         ) {
@@ -1235,13 +1303,16 @@ private fun FileRow(
 private fun FileGridCard(
     item: FileItem,
     selected: Boolean,
+    favorite: Boolean = false,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val shape = RoundedCornerShape(if (selected) 20.dp else 16.dp)
+    Box(modifier = modifier) {
     Surface(
         color = if (selected) MaterialTheme.colorScheme.primaryContainer
+        else if (favorite) MaterialTheme.colorScheme.surfaceContainerHighest
         else MaterialTheme.colorScheme.surfaceContainerHigh,
         contentColor = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
         else MaterialTheme.colorScheme.onSurface,
@@ -1286,6 +1357,14 @@ private fun FileGridCard(
                 Icon(Icons.Filled.CheckCircle, "Selected", tint = MaterialTheme.colorScheme.primary)
             }
         }
+    }
+    if (favorite) {
+        Icon(
+            Icons.Filled.Star, "Favorite",
+            tint = MaterialTheme.colorScheme.tertiary,
+            modifier = Modifier.align(Alignment.TopEnd).padding(8.dp).size(14.dp)
+        )
+    }
     }
 }
 
