@@ -8,10 +8,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -85,7 +85,8 @@ private object RootRoute {
     const val SETTINGS = "settings"
 }
 
-private val DrawerSheetWidth = 300.dp
+private val DrawerSheetWidth = 280.dp
+private val DeviceUsageBarWidth = 168.dp
 
 @Composable
 private fun DrawerSectionLabel(text: String) {
@@ -106,7 +107,6 @@ private fun DeviceDrawerRow(
 ) {
     Column(
         modifier = Modifier
-            .fillMaxWidth()
             .clickable(onClick = onClick)
             .padding(horizontal = 28.dp, vertical = 8.dp)
     ) {
@@ -126,8 +126,7 @@ private fun DeviceDrawerRow(
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f)
+                overflow = TextOverflow.Ellipsis
             )
         }
         if (usedBytes != null && totalBytes != null && totalBytes > 0) {
@@ -141,7 +140,7 @@ private fun DeviceDrawerRow(
             )
             LinearProgressIndicator(
                 progress = { (usedBytes.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f) },
-                modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+                modifier = Modifier.width(DeviceUsageBarWidth).padding(top = 4.dp)
             )
         }
     }
@@ -283,7 +282,11 @@ fun KArchiverRoot() {
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
-            ModalDrawerSheet(modifier = Modifier.width(DrawerSheetWidth)) {
+            ModalDrawerSheet(
+                modifier = Modifier
+                    .widthIn(max = DrawerSheetWidth)
+                    .height(IntrinsicSize.Min)
+            ) {
                 Spacer(modifier = Modifier.height(30.dp))
                 destinations.forEach { destination ->
                     CustomNavigationDrawerItem(
