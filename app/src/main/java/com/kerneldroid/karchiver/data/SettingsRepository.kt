@@ -29,7 +29,8 @@ data class AppSettings(
     val rarWriteEnabled: Boolean = false,
     val elevationMode: String = "off",
     val safAutoFallback: Boolean = true,
-    val seeDevicesInUi: Boolean = false
+    val seeDevicesInUi: Boolean = false,
+    val historyEnabled: Boolean = true
 )
 
 class SettingsRepository(private val appContext: Context) {
@@ -55,6 +56,7 @@ class SettingsRepository(private val appContext: Context) {
         val RAR_WRITE_ENABLED = booleanPreferencesKey("rar_write_enabled")
         val SAF_AUTO_FALLBACK = booleanPreferencesKey("saf_auto_fallback")
         val SEE_DEVICES_IN_UI = booleanPreferencesKey("see_devices_in_ui")
+        val HISTORY_ENABLED = booleanPreferencesKey("history_enabled")
         val FAVORITES = stringSetPreferencesKey("favorite_paths")
     }
 
@@ -113,7 +115,8 @@ class SettingsRepository(private val appContext: Context) {
             rarWriteEnabled = p[Keys.RAR_WRITE_ENABLED] ?: false,
             elevationMode = p[Keys.ELEVATION_MODE] ?: "off",
             safAutoFallback = p[Keys.SAF_AUTO_FALLBACK] ?: true,
-            seeDevicesInUi = p[Keys.SEE_DEVICES_IN_UI] ?: false
+            seeDevicesInUi = p[Keys.SEE_DEVICES_IN_UI] ?: false,
+            historyEnabled = p[Keys.HISTORY_ENABLED] ?: true
         )
     }
 
@@ -172,4 +175,7 @@ class SettingsRepository(private val appContext: Context) {
 
     suspend fun setSeeDevicesInUi(value: Boolean) =
         appContext.dataStore.edit { it[Keys.SEE_DEVICES_IN_UI] = value }
+
+    suspend fun setHistoryEnabled(value: Boolean) =
+        appContext.dataStore.edit { it[Keys.HISTORY_ENABLED] = value }
 }

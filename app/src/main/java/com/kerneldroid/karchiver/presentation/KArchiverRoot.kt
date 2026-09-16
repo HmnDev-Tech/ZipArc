@@ -242,6 +242,7 @@ fun KArchiverRoot() {
         vm.setRarEnabled(s.rarEnabled)
         vm.setRarWriteEnabled(s.rarWriteEnabled)
         vm.setElevationMode(s.elevationMode)
+        vm.setHistoryEnabled(s.historyEnabled)
         ready = true
     }
 
@@ -387,6 +388,7 @@ fun KArchiverRoot() {
                 onOpenDrawer = ::openDrawer,
                 onBack = { navController.popBackStack() },
                 recentFolders = recents,
+                historyEnabled = settings?.historyEnabled != false,
                 onOpenHistory = { navController.navigate(RootRoute.HISTORY) },
                 barLifted = barLifted,
                 onToggleBar = { barLifted = !barLifted }

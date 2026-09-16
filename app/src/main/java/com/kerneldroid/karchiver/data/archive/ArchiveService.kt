@@ -45,6 +45,7 @@ class ArchiveService : Service() {
         const val EXTRA_FORMAT = "extra_format"
         const val EXTRA_PASSWORD = "extra_password"
         const val EXTRA_ELEVATION = "extra_elevation"
+        const val EXTRA_ONLY_NAMES = "extra_only_names"
         const val CHANNEL_ID = "archive_ops"
         const val DONE_CHANNEL_ID = "archive_done"
         const val NOTIFICATION_ID = 1
@@ -75,7 +76,8 @@ class ArchiveService : Service() {
             archive: File,
             destDir: File,
             password: String?,
-            elevationMode: String
+            elevationMode: String,
+            onlyNames: List<String>? = null
         ) {
             val intent = Intent(context, ArchiveService::class.java)
             intent.action = ACTION_START
@@ -85,6 +87,9 @@ class ArchiveService : Service() {
             intent.putExtra(EXTRA_DEST, destDir.absolutePath)
             intent.putExtra(EXTRA_PASSWORD, password)
             intent.putExtra(EXTRA_ELEVATION, elevationMode)
+            if (onlyNames != null) {
+                intent.putExtra(EXTRA_ONLY_NAMES, onlyNames.toTypedArray())
+            }
             context.startForegroundService(intent)
         }
 
@@ -138,6 +143,7 @@ class ArchiveService : Service() {
         val archiveStr: String?
         val destStr: String?
         val formatName: String?
+        var onlyNames: Array<String>? = null
         when (kind) {
             OpKind.COMPRESS -> {
                 srcPaths = intent.getStringArrayExtra(EXTRA_SOURCES)
@@ -152,6 +158,7 @@ class ArchiveService : Service() {
             OpKind.EXTRACT -> {
                 archiveStr = intent.getStringExtra(EXTRA_ARCHIVE)
                 destStr = intent.getStringExtra(EXTRA_DEST)
+                onlyNames = intent.getStringArrayExtra(EXTRA_ONLY_NAMES)
                 srcPaths = null
                 formatName = null
                 if (archiveStr.isNullOrEmpty() || destStr.isNullOrEmpty()) {
@@ -182,6 +189,7 @@ class ArchiveService : Service() {
         val capturedArchive = archiveStr
         val capturedDest = destStr
         val capturedFormat = formatName
+        val capturedOnlyNames = onlyNames?.toList()
         scopeJob = scope.launch {
             try {
                 runOp(
@@ -192,7 +200,8 @@ class ArchiveService : Service() {
                     capturedFormat,
                     password,
                     elevationMode,
-                    label
+                    label,
+                    capturedOnlyNames
                 )
             } finally {
                 releaseWakeLock()
@@ -209,7 +218,8 @@ class ArchiveService : Service() {
         formatName: String?,
         password: String?,
         elevationMode: String,
-        label: String
+        label: String,
+        onlyNames: List<String>? = null
     ) {
         val progressJob = launch {
             while (isActive) {
@@ -249,7 +259,8 @@ class ArchiveService : Service() {
             destStr,
             formatName,
             password,
-            elevationMode
+            elevationMode,
+            onlyNames
         )
         progressJob.cancel()
         val finalOutcome = if (stalledDetected) {
@@ -319,7 +330,8 @@ class ArchiveService : Service() {
         destStr: String?,
         formatName: String?,
         password: String?,
-        elevationMode: String
+        elevationMode: String,
+        onlyNames: List<String>? = null
     ): OpOutcome {
         return try {
             val repo = FileSystemRepository()
@@ -341,7 +353,14 @@ class ArchiveService : Service() {
                     repo.compress(sources, dest, format, password)
                 }
                 OpKind.EXTRACT -> {
-                    repo.extract(File(archiveStr ?: ""), File(destStr ?: ""), password, engine, elevationMode)
+                    repo.extract(
+                        File(archiveStr ?: ""),
+                        File(destStr ?: ""),
+                        password,
+                        engine,
+                        elevationMode,
+                        onlyNames
+                    )
                 }
             }
             if (result.isSuccess) {

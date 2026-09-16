@@ -293,7 +293,13 @@ object SafFs {
             }
         }
 
-    suspend fun copyIn(context: Context, treeUri: Uri, relParent: String, src: File): Boolean =
+    suspend fun copyIn(
+        context: Context,
+        treeUri: Uri,
+        relParent: String,
+        src: File,
+        destName: String = src.name
+    ): Boolean =
         withContext(Dispatchers.IO) {
             try {
                 if (!src.exists()) return@withContext false
@@ -308,7 +314,7 @@ object SafFs {
                 } catch (_: Exception) {
                     return@withContext false
                 }
-                copyInRecursive(context, treeUri, parentUri, parentDocId, src)
+                copyInRecursive(context, treeUri, parentUri, parentDocId, src, destName)
             } catch (_: Exception) {
                 false
             }
@@ -447,7 +453,8 @@ object SafFs {
         treeUri: Uri,
         parentUri: Uri,
         parentDocId: String,
-        src: File
+        src: File,
+        destName: String = src.name
     ): Boolean {
         return try {
             val resolver = context.contentResolver
@@ -455,7 +462,7 @@ object SafFs {
                 val kids = src.listFiles() ?: return false
                 var dirDocId: String? = null
                 var dirUri: Uri? = null
-                val existing = lookupChild(context, treeUri, parentDocId, src.name)
+                val existing = lookupChild(context, treeUri, parentDocId, destName)
                 if (existing != null) {
                     val existingUri =
                         DocumentsContract.buildDocumentUriUsingTree(treeUri, existing.docId)
@@ -477,7 +484,7 @@ object SafFs {
                             resolver,
                             parentUri,
                             DocumentsContract.Document.MIME_TYPE_DIR,
-                            src.name
+                            destName
                         )
                     } catch (_: Exception) {
                         null
@@ -495,7 +502,7 @@ object SafFs {
                 }
                 true
             } else {
-                val existing = lookupChild(context, treeUri, parentDocId, src.name)
+                val existing = lookupChild(context, treeUri, parentDocId, destName)
                 if (existing != null) {
                     val existingUri =
                         DocumentsContract.buildDocumentUriUsingTree(treeUri, existing.docId)
@@ -506,7 +513,7 @@ object SafFs {
                 if (existing != null) {
                     val existingUri =
                         DocumentsContract.buildDocumentUriUsingTree(treeUri, existing.docId)
-                    val bakName = src.name + ".karchiver-bak"
+                    val bakName = destName + ".karchiver-bak"
                     val staleBak = lookupChild(context, treeUri, parentDocId, bakName)
                     if (staleBak != null) {
                         try {
@@ -532,7 +539,7 @@ object SafFs {
                         }
                     }
                 }
-                val tempName = src.name + ".karchiver-part"
+                val tempName = destName + ".karchiver-part"
                 val staleTemp = lookupChild(context, treeUri, parentDocId, tempName)
                 if (staleTemp != null) {
                     try {
@@ -547,13 +554,13 @@ object SafFs {
                     DocumentsContract.createDocument(
                         resolver,
                         parentUri,
-                        mimeOf(src.name),
+                        mimeOf(destName),
                         tempName
                     )
                 } catch (_: Exception) {
                     null
                 } ?: run {
-                    restoreBak(context, treeUri, bakUri, src.name)
+                    restoreBak(context, treeUri, bakUri, destName)
                     return false
                 }
                 var writeOk = false
@@ -573,12 +580,12 @@ object SafFs {
                         DocumentsContract.deleteDocument(resolver, tempUri)
                     } catch (_: Exception) {
                     }
-                    restoreBak(context, treeUri, bakUri, src.name)
+                    restoreBak(context, treeUri, bakUri, destName)
                     return false
                 }
                 var finalUri: Uri? = null
                 try {
-                    finalUri = DocumentsContract.renameDocument(resolver, tempUri, src.name)
+                    finalUri = DocumentsContract.renameDocument(resolver, tempUri, destName)
                 } catch (_: Exception) {
                     null
                 }
@@ -587,7 +594,7 @@ object SafFs {
                         DocumentsContract.deleteDocument(resolver, tempUri)
                     } catch (_: Exception) {
                     }
-                    restoreBak(context, treeUri, bakUri, src.name)
+                    restoreBak(context, treeUri, bakUri, destName)
                     return false
                 }
                 if (isGuessable(treeUri)) {
@@ -596,12 +603,12 @@ object SafFs {
                     } catch (_: Exception) {
                         null
                     }
-                    if (finalId == null || !finalId.endsWith("/" + src.name)) {
+                    if (finalId == null || !finalId.endsWith("/" + destName)) {
                         try {
                             DocumentsContract.deleteDocument(resolver, finalUri)
                         } catch (_: Exception) {
                         }
-                        restoreBak(context, treeUri, bakUri, src.name)
+                        restoreBak(context, treeUri, bakUri, destName)
                         return false
                     }
                 }

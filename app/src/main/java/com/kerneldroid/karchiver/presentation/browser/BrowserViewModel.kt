@@ -13,6 +13,10 @@ import androidx.lifecycle.viewModelScope
 import com.kerneldroid.karchiver.data.FileItem
 import com.kerneldroid.karchiver.data.FileSystemRepository
 import com.kerneldroid.karchiver.data.CompressFormat
+import com.kerneldroid.karchiver.data.ConflictPolicy
+import com.kerneldroid.karchiver.data.conflictsAmong
+import com.kerneldroid.karchiver.data.topLevelNames
+import com.kerneldroid.karchiver.data.uniqueName
 import com.kerneldroid.karchiver.data.FormatRegistry
 import com.kerneldroid.karchiver.data.RAR_DISABLED_MESSAGE
 import com.kerneldroid.karchiver.data.RarAccessException
@@ -65,6 +69,29 @@ data class VerifyUiState(
     val passwordUsed: String = ""
 )
 
+sealed interface ConflictRequest {
+    val destDir: File
+    val existingNames: Set<String>
+    val names: List<String>
+
+    data class Paste(
+        val files: List<File>,
+        val move: Boolean,
+        override val destDir: File,
+        override val existingNames: Set<String>,
+        override val names: List<String>
+    ) : ConflictRequest
+
+    data class Extract(
+        val archive: File,
+        val password: String,
+        val topLevel: List<String>,
+        override val destDir: File,
+        override val existingNames: Set<String>,
+        override val names: List<String>
+    ) : ConflictRequest
+}
+
 data class BrowserUiState(
     val currentDir: File = Environment.getExternalStorageDirectory(),
     val items: List<FileItem> = emptyList(),
@@ -101,6 +128,12 @@ class BrowserViewModel(
     val archiveOp: StateFlow<ActiveOp?> = ArchiveOpManager.active
     val progressDialogVisible = MutableStateFlow(true)
     private var pendingCompletion: ((Result<Unit>) -> Unit)? = null
+
+    private val _conflict = MutableStateFlow<ConflictRequest?>(null)
+    val conflict: StateFlow<ConflictRequest?> = _conflict
+    private var pendingPasteDone: ((Result<Unit>) -> Unit)? = null
+    private var pendingExtractDone: ((Result<Unit>) -> Unit)? = null
+    private var pendingExtractContext: Context? = null
 
     init {
         viewModelScope.launch {
@@ -270,6 +303,7 @@ class BrowserViewModel(
     private var appCtx: Context? = null
     private var safHelper: SafGrants? = null
     private var historyRepo: HistoryRepository? = null
+    private var historyEnabled = true
 
     private val _safGrants = MutableStateFlow<Map<String, Uri>>(emptyMap())
     val safGrants: StateFlow<Map<String, Uri>> = _safGrants
@@ -471,8 +505,13 @@ class BrowserViewModel(
     }
 
     fun recordInteraction(file: File) {
+        if (!historyEnabled) return
         val repo = historyRepo ?: return
         viewModelScope.launch { repo.record(file) }
+    }
+
+    fun setHistoryEnabled(value: Boolean) {
+        historyEnabled = value
     }
 
     fun navigateTo(dir: File) {
@@ -551,14 +590,105 @@ class BrowserViewModel(
     fun paste(onDone: (Result<Unit>) -> Unit = {}) {
         val (files, isCut) = clipboard ?: return
         viewModelScope.launch {
+            val dest = _state.value.currentDir
+            val existing = repo.listNames(dest, elevationEngine())
+            val conflicts = conflictsAmong(existing, files.map { it.name })
+            if (conflicts.isNotEmpty()) {
+                pendingPasteDone = onDone
+                _conflict.value = ConflictRequest.Paste(
+                    files = files,
+                    move = isCut,
+                    destDir = dest,
+                    existingNames = existing,
+                    names = conflicts
+                )
+                return@launch
+            }
+            performPaste(files, dest, isCut, existing, ConflictPolicy.REPLACE, onDone)
+        }
+    }
+
+    private fun performPaste(
+        files: List<File>,
+        destDir: File,
+        move: Boolean,
+        existingNames: Set<String>,
+        policy: ConflictPolicy,
+        onDone: (Result<Unit>) -> Unit
+    ) {
+        viewModelScope.launch {
             _state.value = _state.value.copy(isLoading = true)
-            val r = if (isCut) repo.cut(files, _state.value.currentDir)
-            else repo.copy(files, _state.value.currentDir)
+            val r = if (move) {
+                repo.cut(files, destDir, policy, existingNames)
+            } else {
+                repo.copy(files, destDir, policy, existingNames)
+            }
             clipboard = null
             refresh()
             maybeRequestGrant(r)
             onDone(r)
         }
+    }
+
+    fun resolveConflict(policy: ConflictPolicy) {
+        val request = _conflict.value ?: return
+        _conflict.value = null
+        when (request) {
+            is ConflictRequest.Paste -> {
+                val done = pendingPasteDone ?: {}
+                pendingPasteDone = null
+                performPaste(
+                    request.files,
+                    request.destDir,
+                    request.move,
+                    request.existingNames,
+                    policy,
+                    done
+                )
+            }
+            is ConflictRequest.Extract -> {
+                val context = pendingExtractContext
+                val done = pendingExtractDone ?: {}
+                pendingExtractContext = null
+                pendingExtractDone = null
+                if (context == null) {
+                    done(Result.failure(Exception("Extraction context lost")))
+                    return
+                }
+                when (policy) {
+                    ConflictPolicy.REPLACE -> performExtract(
+                        context, request.archive, request.destDir, request.password, null, done
+                    )
+                    ConflictPolicy.SKIP -> {
+                        val only = request.topLevel.filterNot { request.existingNames.contains(it) }
+                        if (only.isEmpty()) {
+                            done(Result.failure(Exception("Nothing to extract")))
+                            return
+                        }
+                        performExtract(
+                            context, request.archive, request.destDir, request.password, only, done
+                        )
+                    }
+                    ConflictPolicy.KEEP_BOTH -> {
+                        val parent = request.destDir.parentFile ?: request.destDir
+                        viewModelScope.launch {
+                            val taken = repo.listNames(parent, elevationEngine())
+                            val renamed = uniqueName(request.destDir.name, taken)
+                            performExtract(
+                                context, request.archive, File(parent, renamed), request.password, null, done
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fun dismissConflict() {
+        _conflict.value = null
+        pendingPasteDone = null
+        pendingExtractDone = null
+        pendingExtractContext = null
     }
 
     fun deleteSelection(onDone: (Result<Unit>) -> Unit = {}) {
@@ -619,10 +749,60 @@ class BrowserViewModel(
             onDone(Result.failure(Exception("Another operation is in progress")))
             return
         }
+        viewModelScope.launch {
+            val dest = File(file.parentFile, file.nameWithoutExtension)
+            val existing = repo.listNames(dest, elevationEngine())
+            val topLevel = if (existing.isEmpty()) {
+                emptyList()
+            } else {
+                val listing = repo.previewArchive(
+                    file,
+                    password.ifEmpty { null },
+                    elevationEngine(),
+                    _state.value.elevationMode
+                )
+                topLevelNames(listing.getOrNull()?.entries?.map { it.name } ?: emptyList())
+            }
+            val conflicts = conflictsAmong(existing, topLevel)
+            if (conflicts.isNotEmpty()) {
+                pendingExtractDone = onDone
+                pendingExtractContext = context.applicationContext
+                _conflict.value = ConflictRequest.Extract(
+                    archive = file,
+                    password = password,
+                    topLevel = topLevel,
+                    destDir = dest,
+                    existingNames = existing,
+                    names = conflicts
+                )
+                return@launch
+            }
+            performExtract(context, file, dest, password, null, onDone)
+        }
+    }
+
+    private fun performExtract(
+        context: Context,
+        file: File,
+        destDir: File,
+        password: String,
+        onlyNames: List<String>?,
+        onDone: (Result<Unit>) -> Unit
+    ) {
+        if (ArchiveOpManager.active.value != null || pendingCompletion != null) {
+            onDone(Result.failure(Exception("Another operation is in progress")))
+            return
+        }
         pendingCompletion = onDone
         progressDialogVisible.value = true
-        val dest = File(file.parentFile, file.nameWithoutExtension)
-        ArchiveService.startExtract(context, file, dest, password.ifEmpty { null }, _state.value.elevationMode)
+        ArchiveService.startExtract(
+            context,
+            file,
+            destDir,
+            password.ifEmpty { null },
+            _state.value.elevationMode,
+            onlyNames
+        )
     }
 
     fun extractArchive(context: Context, file: File, password: String = "", onDone: (Result<Unit>) -> Unit = {}) {

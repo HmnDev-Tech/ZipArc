@@ -278,33 +278,57 @@ class FileSystemRepository {
         }
     }
 
-    suspend fun copy(sources: List<File>, destDir: File): Result<Unit> = withContext(Dispatchers.IO) {
+    suspend fun listNames(dir: File, elevated: ElevatedFS? = null): Set<String> = withContext(Dispatchers.IO) {
+        if (!dir.isDirectory) return@withContext emptySet()
         runCatching {
-            if (useSafFirst(destDir) && trySafCopy(sources, destDir, move = false)) return@runCatching
-            nativeCopy(sources, destDir)
+            listDir(dir, SortBy.NAME, ascending = true, foldersFirst = true, elevated = elevated)
+                .mapTo(HashSet()) { it.name }
+        }.getOrDefault(emptySet())
+    }
+
+    suspend fun copy(
+        sources: List<File>,
+        destDir: File,
+        policy: ConflictPolicy = ConflictPolicy.REPLACE,
+        existingNames: Set<String>? = null
+    ): Result<Unit> = withContext(Dispatchers.IO) {
+        val present = existingNames ?: listNames(destDir)
+        val plan = buildCopyPlan(sources, present, policy)
+        if (plan.isEmpty()) return@withContext Result.success(Unit)
+        runCatching {
+            if (useSafFirst(destDir) && trySafCopy(plan, destDir, move = false)) return@runCatching
+            nativeCopy(plan, destDir)
         }.recoverCatching { e ->
-            if (!trySafCopy(sources, destDir, move = false)) throw e
+            if (!trySafCopy(plan, destDir, move = false)) throw e
         }
     }
 
-    suspend fun cut(sources: List<File>, destDir: File): Result<Unit> = withContext(Dispatchers.IO) {
+    suspend fun cut(
+        sources: List<File>,
+        destDir: File,
+        policy: ConflictPolicy = ConflictPolicy.REPLACE,
+        existingNames: Set<String>? = null
+    ): Result<Unit> = withContext(Dispatchers.IO) {
+        val present = existingNames ?: listNames(destDir)
+        val plan = buildCopyPlan(sources, present, policy)
+        if (plan.isEmpty()) return@withContext Result.success(Unit)
         runCatching {
-            if (useSafFirst(destDir) && trySafCopy(sources, destDir, move = true)) return@runCatching
-            nativeCopy(sources, destDir)
-            nativeDelete(sources)
+            if (useSafFirst(destDir) && trySafCopy(plan, destDir, move = true)) return@runCatching
+            nativeCopy(plan, destDir)
+            nativeDelete(plan.map { it.source })
         }.recoverCatching { e ->
-            if (!trySafCopy(sources, destDir, move = true)) throw e
+            if (!trySafCopy(plan, destDir, move = true)) throw e
         }
     }
 
-    private fun nativeCopy(sources: List<File>, destDir: File) {
+    private fun nativeCopy(plan: List<CopyItem>, destDir: File) {
         destDir.mkdirs()
-        sources.forEach { src ->
-            val dst = File(destDir, src.name)
-            if (src.isDirectory) {
-                if (!src.copyRecursively(dst, overwrite = true)) error("Copy failed")
+        plan.forEach { item ->
+            val dst = File(destDir, item.destName)
+            if (item.source.isDirectory) {
+                if (!item.source.copyRecursively(dst, overwrite = true)) error("Copy failed")
             } else {
-                transactionalCopy(src, dst)
+                transactionalCopy(item.source, dst)
             }
         }
     }
@@ -369,11 +393,11 @@ class FileSystemRepository {
         }
     }
 
-    private suspend fun trySafCopy(sources: List<File>, destDir: File, move: Boolean): Boolean {
+    private suspend fun trySafCopy(plan: List<CopyItem>, destDir: File, move: Boolean): Boolean {
         if (!safAutoFallback) return false
         val bridge = safBridge ?: return false
         return try {
-            bridge.copyInTree(sources, destDir, move, safVolumes)
+            bridge.copyInTree(plan, destDir, move, safVolumes)
         } catch (_: Exception) {
             false
         }
@@ -442,7 +466,7 @@ class FileSystemRepository {
         val final = if (result.isSuccess && destViaSaf) {
             val destParent = fixed.parentFile
             val pushed = if (bridge == null || destParent == null) false else try {
-                bridge.copyInTree(listOf(outFile), destParent, false, safVolumes)
+                bridge.copyInTree(listOf(CopyItem(outFile, outFile.name)), destParent, false, safVolumes)
             } catch (_: Exception) {
                 false
             }
@@ -462,16 +486,18 @@ class FileSystemRepository {
         destDir: File,
         password: String? = null,
         elevated: ElevatedFS? = null,
-        elevationMode: String = "off"
+        elevationMode: String = "off",
+        onlyNames: List<String>? = null
     ): Result<Unit> = withContext(Dispatchers.IO) {
+        if (onlyNames != null && onlyNames.isEmpty()) return@withContext Result.success(Unit)
         runCatching {
-            normalExtract(archive, destDir, password)
+            normalExtract(archive, destDir, password, onlyNames)
         }.recoverCatching { e ->
-            if (tryPfdExtract(archive, destDir, password)) return@recoverCatching
-            if (trySafExtract(archive, destDir, password)) return@recoverCatching
+            if (onlyNames == null && tryPfdExtract(archive, destDir, password)) return@recoverCatching
+            if (trySafExtract(archive, destDir, password, onlyNames)) return@recoverCatching
             val eng = elevated ?: throw e
             if (archive.canRead()) throw e
-            extractElevated(archive, destDir, password, eng, elevationMode).getOrThrow()
+            extractElevated(archive, destDir, password, eng, elevationMode, onlyNames).getOrThrow()
         }
     }
 
@@ -498,7 +524,12 @@ class FileSystemRepository {
         }
     }
 
-    private suspend fun trySafExtract(archive: File, destDir: File, password: String?): Boolean {
+    private suspend fun trySafExtract(
+        archive: File,
+        destDir: File,
+        password: String?,
+        onlyNames: List<String>? = null
+    ): Boolean {
         if (!safAutoFallback) return false
         val bridge = safBridge ?: return false
         val tmp = tempDir ?: return false
@@ -511,7 +542,7 @@ class FileSystemRepository {
                 val effective = bridge.stageArchiveIn(archive, safVolumes, staging) ?: archive
                 if (destDir.canWrite()) {
                     try {
-                        normalExtract(effective, destDir, password)
+                        normalExtract(effective, destDir, password, onlyNames)
                         true
                     } catch (_: Exception) {
                         false
@@ -521,7 +552,7 @@ class FileSystemRepository {
                     work.mkdirs()
                     if (!work.isDirectory) return false
                     try {
-                        normalExtract(effective, work, password)
+                        normalExtract(effective, work, password, onlyNames)
                     } catch (_: Exception) {
                         return false
                     }
@@ -538,8 +569,17 @@ class FileSystemRepository {
         }
     }
 
-    private fun normalExtract(archive: File, destDir: File, password: String?) {
+    private fun normalExtract(
+        archive: File,
+        destDir: File,
+        password: String?,
+        onlyNames: List<String>? = null
+    ) {
         destDir.mkdirs()
+        if (onlyNames != null) {
+            extractFilteredLocal(archive, onlyNames, destDir, password)
+            return
+        }
         if (!RustBridge.isLoaded()) {
             if (!password.isNullOrEmpty()) error("Password protection requires the native engine")
             fallbackUnzip(archive, destDir)
@@ -558,7 +598,8 @@ class FileSystemRepository {
         destDir: File,
         password: String?,
         eng: ElevatedFS,
-        mode: String
+        mode: String,
+        onlyNames: List<String>? = null
     ): Result<Unit> {
         try {
             requireCaps(archive, mode, (eng as? ShizukuEngine)?.shizukuUid())
@@ -567,12 +608,23 @@ class FileSystemRepository {
                 is ShizukuEngine -> {
                     val pfd = eng.openReadFd(archive.absolutePath) ?: error("Cannot open file")
                     try {
-                        val code = if (password.isNullOrEmpty()) {
-                            RustBridge.extractFd(pfd.fd, destDir.absolutePath)
+                        if (onlyNames == null) {
+                            val code = if (password.isNullOrEmpty()) {
+                                RustBridge.extractFd(pfd.fd, destDir.absolutePath)
+                            } else {
+                                RustBridge.extractWithPasswordFd(pfd.fd, destDir.absolutePath, password)
+                            }
+                            if (code != 0) error("Rust extract failed code=$code")
                         } else {
-                            RustBridge.extractWithPasswordFd(pfd.fd, destDir.absolutePath, password)
+                            val staged = stagePfd(pfd, tempDir ?: error("No temp dir"), "elevated-" + archive.name)
+                                ?: error("Cannot read file")
+                            try {
+                                normalExtract(staged, destDir, password, onlyNames)
+                            } finally {
+                                try { staged.delete() } catch (_: Exception) {
+                                }
+                            }
                         }
-                        if (code != 0) error("Rust extract failed code=$code")
                     } finally {
                         closeQuietly(pfd)
                     }
@@ -583,7 +635,7 @@ class FileSystemRepository {
                     val staged = File(tmp, "elevated-" + archive.name)
                     if (!eng.copyInto(archive, staged)) error("Cannot read file")
                     try {
-                        normalExtract(staged, destDir, password)
+                        normalExtract(staged, destDir, password, onlyNames)
                     } finally {
                         staged.delete()
                     }
@@ -596,6 +648,17 @@ class FileSystemRepository {
         } catch (e: Exception) {
             return Result.failure(e)
         }
+    }
+
+    private fun stagePfd(pfd: android.os.ParcelFileDescriptor, dir: File, name: String): File? = try {
+        dir.mkdirs()
+        val out = File(dir, name)
+        java.io.FileInputStream(pfd.fileDescriptor).use { input ->
+            out.outputStream().use { output -> input.copyTo(output) }
+        }
+        out
+    } catch (_: Exception) {
+        null
     }
 
     private fun closeQuietly(pfd: android.os.ParcelFileDescriptor) {

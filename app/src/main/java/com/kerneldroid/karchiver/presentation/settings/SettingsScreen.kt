@@ -507,7 +507,7 @@ fun SettingsScreen(
             Column(verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap)) {
                 SettingSwitch(
                     index = 0,
-                    count = 3,
+                    count = 4,
                     title = "Open last folder",
                     subtitle = "Return to the folder you were in when the app starts.",
                     checked = settings.openLastFolder,
@@ -515,7 +515,7 @@ fun SettingsScreen(
                 )
                 SettingSwitch(
                     index = 1,
-                    count = 3,
+                    count = 4,
                     title = "Hide hidden files",
                     subtitle = "Do not show files and folders whose name starts with a dot.",
                     checked = settings.hideHidden,
@@ -523,7 +523,15 @@ fun SettingsScreen(
                 )
                 SettingSwitch(
                     index = 2,
-                    count = 3,
+                    count = 4,
+                    title = "History",
+                    subtitle = "Keep a searchable history of everything you open. When off, only the last few folders are kept.",
+                    checked = settings.historyEnabled,
+                    onCheckedChange = { scope.launch { repo.setHistoryEnabled(it) } }
+                )
+                SettingSwitch(
+                    index = 3,
+                    count = 4,
                     title = "See devices in UI",
                     subtitle = "Show connected drives with used space in the navigation bar.",
                     checked = settings.seeDevicesInUi,

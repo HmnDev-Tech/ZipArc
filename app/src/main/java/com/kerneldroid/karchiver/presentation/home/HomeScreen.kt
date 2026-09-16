@@ -94,6 +94,7 @@ fun HomeScreen(
     onOpenDrawer: () -> Unit,
     onBack: () -> Unit,
     recentFolders: List<String> = emptyList(),
+    historyEnabled: Boolean = true,
     onOpenHistory: () -> Unit = {},
     barLifted: Boolean = false,
     onToggleBar: () -> Unit = {}
@@ -102,8 +103,8 @@ fun HomeScreen(
     val context = LocalContext.current
     val haptics = LocalHapticFeedback.current
     val entries = remember { homeEntries() }
-    val recents = remember(recentFolders) {
-        recentFolders.filter { File(it).isDirectory }.take(3)
+    val recents = remember(recentFolders, historyEnabled) {
+        recentFolders.filter { File(it).isDirectory }.take(if (historyEnabled) 3 else 5)
     }
     val volumes by produceState(initialValue = emptyList<VolumeStats>(), context) {
         value = withContext(Dispatchers.IO) { loadVolumeStats(context.applicationContext) }
@@ -163,7 +164,11 @@ fun HomeScreen(
                 )
             }
             item {
-                ClickableSectionHeader(title = "Recent folders", onClick = onOpenHistory)
+                if (historyEnabled) {
+                    ClickableSectionHeader(title = "Recent folders", onClick = onOpenHistory)
+                } else {
+                    SectionHeader("Recent folders")
+                }
             }
             if (recents.isEmpty()) {
                 item {

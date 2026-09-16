@@ -64,6 +64,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.kerneldroid.karchiver.data.CompressFormat
+import com.kerneldroid.karchiver.data.ConflictPolicy
 import com.kerneldroid.karchiver.data.FileItem
 import com.kerneldroid.karchiver.data.FormatRegistry
 import com.kerneldroid.karchiver.data.FileSystemRepository
@@ -106,6 +107,7 @@ fun BrowserScreen(
     val refreshing by vm.refreshing.collectAsStateWithLifecycle()
     val activeOp by vm.archiveOp.collectAsStateWithLifecycle()
     val dialogVisible by vm.progressDialogVisible.collectAsStateWithLifecycle()
+    val conflict by vm.conflict.collectAsStateWithLifecycle()
     val verifyActive by vm.verifyActive.collectAsStateWithLifecycle()
     val preview by vm.preview.collectAsStateWithLifecycle()
     val verify by vm.verify.collectAsStateWithLifecycle()
@@ -525,6 +527,58 @@ fun BrowserScreen(
                     scope.launch { snackbar.showSnackbar("Cannot open with this app") }
                 }
                 openWithFile = null
+            }
+        )
+    }
+
+    if (conflict != null) {
+        val request = conflict!!
+        val itemCount = request.names.size
+        AlertDialog(
+            onDismissRequest = { vm.dismissConflict() },
+            icon = { Icon(Icons.Filled.ContentCopy, null) },
+            title = {
+                Text(if (itemCount == 1) "An item already exists" else "$itemCount items already exist")
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = "The destination already contains:",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    request.names.take(5).forEach { name ->
+                        Text(
+                            text = "• $name",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    if (itemCount > 5) {
+                        Text(
+                            text = "and ${itemCount - 5} more",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(onClick = { vm.resolveConflict(ConflictPolicy.SKIP) }) {
+                        Text("Skip")
+                    }
+                    TextButton(onClick = { vm.resolveConflict(ConflictPolicy.KEEP_BOTH) }) {
+                        Text("Keep both")
+                    }
+                    TextButton(onClick = { vm.resolveConflict(ConflictPolicy.REPLACE) }) {
+                        Text("Replace")
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { vm.dismissConflict() }) { Text("Cancel") }
             }
         )
     }

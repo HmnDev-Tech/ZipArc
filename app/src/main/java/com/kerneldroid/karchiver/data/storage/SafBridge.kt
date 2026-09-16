@@ -2,6 +2,7 @@ package com.kerneldroid.karchiver.data.storage
 
 import android.content.Context
 import android.net.Uri
+import com.kerneldroid.karchiver.data.CopyItem
 import com.kerneldroid.karchiver.data.FileItem
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -97,21 +98,22 @@ class SafBridge(private val context: Context, private val grants: SafGrants) {
         }
 
     suspend fun copyInTree(
-        sources: List<File>,
+        items: List<CopyItem>,
         destDir: File,
         move: Boolean,
         volumes: List<AppVolume>
     ): Boolean = withContext(Dispatchers.IO) {
         try {
             val binding = bindingFor(destDir, volumes) ?: return@withContext false
-            for (src in sources) {
-                if (!src.exists()) return@withContext false
-                if (!SafFs.copyIn(appContext, binding.second, binding.third, src)) {
+            for (item in items) {
+                if (!item.source.exists()) return@withContext false
+                if (!SafFs.copyIn(appContext, binding.second, binding.third, item.source, item.destName)) {
                     return@withContext false
                 }
             }
             if (move) {
-                for (src in sources) {
+                for (item in items) {
+                    val src = item.source
                     try {
                         val removed = if (src.isDirectory) src.deleteRecursively() else src.delete()
                         if (!removed && src.exists()) return@withContext false
