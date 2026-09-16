@@ -91,6 +91,7 @@ import java.util.Locale
 private enum class CreateKind { FOLDER, FILE }
 
 private const val SCROLL_TOP_JUMP_THRESHOLD = 12
+private val FabMenuEdgeInset = 16.dp
 private const val TRIPLE_TAP_WINDOW_MILLIS = 450L
 
 @Composable
@@ -273,24 +274,26 @@ fun BrowserScreen(
                     horizontalAlignment = Alignment.End,
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    ScrollTopButton(
-                        visible = showScrollTop && !fabMenuExpanded,
-                        onClick = {
-                            scope.launch {
-                                if (state.viewMode == ViewMode.LIST) {
-                                    if (listState.firstVisibleItemIndex > SCROLL_TOP_JUMP_THRESHOLD) {
-                                        listState.scrollToItem(SCROLL_TOP_JUMP_THRESHOLD)
+                    if (!fabMenuExpanded) {
+                        ScrollTopButton(
+                            visible = showScrollTop,
+                            onClick = {
+                                scope.launch {
+                                    if (state.viewMode == ViewMode.LIST) {
+                                        if (listState.firstVisibleItemIndex > SCROLL_TOP_JUMP_THRESHOLD) {
+                                            listState.scrollToItem(SCROLL_TOP_JUMP_THRESHOLD)
+                                        }
+                                        listState.animateScrollToItem(0)
+                                    } else {
+                                        if (gridState.firstVisibleItemIndex > SCROLL_TOP_JUMP_THRESHOLD) {
+                                            gridState.scrollToItem(SCROLL_TOP_JUMP_THRESHOLD)
+                                        }
+                                        gridState.animateScrollToItem(0)
                                     }
-                                    listState.animateScrollToItem(0)
-                                } else {
-                                    if (gridState.firstVisibleItemIndex > SCROLL_TOP_JUMP_THRESHOLD) {
-                                        gridState.scrollToItem(SCROLL_TOP_JUMP_THRESHOLD)
-                                    }
-                                    gridState.animateScrollToItem(0)
                                 }
                             }
-                        }
-                    )
+                        )
+                    }
                     CreateFabMenu(
                         expanded = fabMenuExpanded,
                         onExpandedChange = { fabMenuExpanded = it },
@@ -950,6 +953,7 @@ private fun ScrollTopButton(visible: Boolean, onClick: () -> Unit) {
     ) {
         SmallFloatingActionButton(
             onClick = onClick,
+            modifier = Modifier.padding(end = FabMenuEdgeInset),
             containerColor = MaterialTheme.colorScheme.tertiaryContainer,
             contentColor = MaterialTheme.colorScheme.onTertiaryContainer
         ) {
