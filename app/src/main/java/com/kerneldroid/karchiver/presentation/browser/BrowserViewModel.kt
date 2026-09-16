@@ -21,6 +21,7 @@ import com.kerneldroid.karchiver.data.RarWriteLockedException
 import com.kerneldroid.karchiver.data.elevation.ElevatedFS
 import com.kerneldroid.karchiver.data.elevation.RootEngine
 import com.kerneldroid.karchiver.data.elevation.ShizukuEngine
+import com.kerneldroid.karchiver.data.history.HistoryRepository
 import com.kerneldroid.karchiver.data.isRarArchive
 import com.kerneldroid.karchiver.data.normalizeArchiveName
 import com.kerneldroid.karchiver.data.PreviewListing
@@ -156,6 +157,7 @@ class BrowserViewModel(
             _preview.value = ArchivePreviewUiState(file = file, error = RAR_DISABLED_MESSAGE)
             return
         }
+        recordInteraction(file)
         val token = ++previewToken
         _preview.value = ArchivePreviewUiState(file = file, isLoading = true, passwordUsed = password)
         viewModelScope.launch {
@@ -182,6 +184,7 @@ class BrowserViewModel(
             _verify.value = VerifyUiState(file = file, error = RAR_DISABLED_MESSAGE)
             return
         }
+        recordInteraction(file)
         _verify.value = VerifyUiState(file = file, isLoading = true, passwordUsed = password)
         viewModelScope.launch {
             _verifyActive.value = true
@@ -266,6 +269,7 @@ class BrowserViewModel(
     private var volumeMonitor: VolumeMonitor? = null
     private var appCtx: Context? = null
     private var safHelper: SafGrants? = null
+    private var historyRepo: HistoryRepository? = null
 
     private val _safGrants = MutableStateFlow<Map<String, Uri>>(emptyMap())
     val safGrants: StateFlow<Map<String, Uri>> = _safGrants
@@ -294,6 +298,7 @@ class BrowserViewModel(
         initialized = true
         val ctx = appContext.applicationContext ?: appContext
         appCtx = ctx
+        historyRepo = HistoryRepository.get(ctx)
         if (repo.tempDir == null) {
             runCatching { repo.tempDir = ctx.cacheDir }
         }
@@ -465,6 +470,11 @@ class BrowserViewModel(
         return current.parentFile != null
     }
 
+    fun recordInteraction(file: File) {
+        val repo = historyRepo ?: return
+        viewModelScope.launch { repo.record(file) }
+    }
+
     fun navigateTo(dir: File) {
         if (!dir.isDirectory) return
         _state.value = _state.value.copy(
@@ -473,6 +483,7 @@ class BrowserViewModel(
             isSelectionMode = false,
             query = ""
         )
+        recordInteraction(dir)
         refresh()
     }
 
@@ -635,6 +646,7 @@ class BrowserViewModel(
         if (file.isDirectory) { navigateTo(file); return }
         val ext = file.extension.lowercase()
         if (FormatRegistry.isArchive(ext)) return
+        recordInteraction(file)
         val mime = FormatRegistry.forExtension(ext).mime
         val uri = try {
             FileProvider.getUriForFile(context, "${context.packageName}.provider", file)

@@ -13,7 +13,6 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -53,13 +52,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -77,6 +72,7 @@ import com.kerneldroid.karchiver.data.isRarArchive
 import com.kerneldroid.karchiver.data.SortBy
 import com.kerneldroid.karchiver.data.normalizeArchiveName
 import com.kerneldroid.karchiver.data.archive.OpKind
+import com.kerneldroid.karchiver.presentation.components.FileSearchField
 import com.kerneldroid.karchiver.presentation.components.RoundedTopScaffold
 import com.kerneldroid.karchiver.presentation.components.detectBarHold
 import com.kerneldroid.karchiver.data.storage.AppVolume
@@ -184,7 +180,10 @@ fun BrowserScreen(
             item.isDirectory -> vm.navigateTo(item.file)
             FormatRegistry.isArchive(item.extension) -> {
                 if (isRarArchive(item.file) && !rarEnabled) notifyRarDisabled()
-                else pendingExtract = item.file
+                else {
+                    vm.recordInteraction(item.file)
+                    pendingExtract = item.file
+                }
             }
             else -> vm.openFile(context, item.file)
         }
@@ -1052,51 +1051,6 @@ private fun BrowserTopBar(
             IconButton(onClick = onOpenSort) { Icon(Icons.Filled.SortByAlpha, "Sort and view") }
         }
     )
-}
-
-@Composable
-private fun FileSearchField(
-    query: String,
-    onQueryChange: (String) -> Unit,
-    onClose: () -> Unit
-) {
-    val focusRequester = remember { FocusRequester() }
-    val focusManager = LocalFocusManager.current
-    var focused by remember { mutableStateOf(false) }
-    val sidePadding by animateDpAsState(
-        targetValue = if (focused) 12.dp else 24.dp,
-        label = "searchFocusGrow"
-    )
-    LaunchedEffect(Unit) { focusRequester.requestFocus() }
-    SearchBar(
-        inputField = {
-            SearchBarDefaults.InputField(
-                query = query,
-                onQueryChange = onQueryChange,
-                onSearch = { focusManager.clearFocus() },
-                expanded = false,
-                onExpandedChange = {},
-                modifier = Modifier
-                    .focusRequester(focusRequester)
-                    .onFocusChanged { focused = it.isFocused },
-                placeholder = { Text("Search files") },
-                leadingIcon = {
-                    IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
-                },
-                trailingIcon = {
-                    if (query.isNotEmpty()) {
-                        IconButton(onClick = { onQueryChange("") }) { Icon(Icons.Filled.Close, "Clear") }
-                    }
-                }
-            )
-        },
-        expanded = false,
-        onExpandedChange = {},
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = sidePadding, vertical = 4.dp)
-    ) {
-    }
 }
 
 @Composable

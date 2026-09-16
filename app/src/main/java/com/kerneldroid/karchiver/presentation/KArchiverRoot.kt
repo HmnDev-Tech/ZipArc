@@ -62,6 +62,7 @@ import androidx.navigation.compose.rememberNavController
 import com.kerneldroid.karchiver.data.AppSettings
 import com.kerneldroid.karchiver.data.SettingsRepository
 import com.kerneldroid.karchiver.data.formatBytes
+import com.kerneldroid.karchiver.data.history.HistoryEntry
 import com.kerneldroid.karchiver.data.loadVolumeStats
 import com.kerneldroid.karchiver.data.storage.AppVolume
 import com.kerneldroid.karchiver.data.storage.VolumeKind
@@ -71,6 +72,7 @@ import com.kerneldroid.karchiver.presentation.browser.ViewMode
 import com.kerneldroid.karchiver.presentation.components.CustomNavigationDrawerItem
 import com.kerneldroid.karchiver.presentation.components.DrawerDestination
 import com.kerneldroid.karchiver.presentation.home.HomeScreen
+import com.kerneldroid.karchiver.presentation.history.HistoryScreen
 import com.kerneldroid.karchiver.presentation.settings.SettingsScreen
 import java.io.File
 import kotlinx.coroutines.launch
@@ -78,6 +80,7 @@ import kotlinx.coroutines.launch
 private object RootRoute {
     const val BROWSER = "browser"
     const val HOME = "home"
+    const val HISTORY = "history"
     const val SETTINGS = "settings"
 }
 
@@ -201,6 +204,23 @@ fun KArchiverRoot() {
             vm.navigateTo(parent)
             selectDestination(RootRoute.BROWSER)
         }
+    }
+
+    fun openHistoryEntry(entry: HistoryEntry): Boolean {
+        val file = File(entry.path)
+        val dir = when {
+            entry.isDirectory && file.isDirectory -> file
+            file.exists() -> file.parentFile
+            else -> null
+        }
+        if (dir == null || !dir.isDirectory) return false
+        haptics.performHapticFeedback(HapticFeedbackType.SegmentFrequentTick)
+        vm.navigateTo(dir)
+        navController.navigate(RootRoute.BROWSER) {
+            popUpTo(navController.graph.startDestinationId)
+            launchSingleTop = true
+        }
+        return true
     }
 
     LaunchedEffect(settings) {
@@ -367,6 +387,15 @@ fun KArchiverRoot() {
                 onOpenDrawer = ::openDrawer,
                 onBack = { navController.popBackStack() },
                 recentFolders = recents,
+                onOpenHistory = { navController.navigate(RootRoute.HISTORY) },
+                barLifted = barLifted,
+                onToggleBar = { barLifted = !barLifted }
+            )
+        }
+        composable(RootRoute.HISTORY) {
+            HistoryScreen(
+                onBack = { navController.popBackStack() },
+                onOpenEntry = ::openHistoryEntry,
                 barLifted = barLifted,
                 onToggleBar = { barLifted = !barLifted }
             )

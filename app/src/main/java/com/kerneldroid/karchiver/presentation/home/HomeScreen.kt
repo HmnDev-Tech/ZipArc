@@ -3,19 +3,24 @@ package com.kerneldroid.karchiver.presentation.home
 import android.os.Environment
 import android.os.StatFs
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AudioFile
@@ -45,6 +50,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.carousel.HorizontalUncontainedCarousel
+import androidx.compose.material3.carousel.rememberCarouselState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -55,6 +62,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -77,6 +85,8 @@ import kotlinx.coroutines.withContext
 
 private data class HomeEntry(val title: String, val path: String, val icon: ImageVector)
 
+private val StorageCardHeight = 168.dp
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun HomeScreen(
@@ -84,6 +94,7 @@ fun HomeScreen(
     onOpenDrawer: () -> Unit,
     onBack: () -> Unit,
     recentFolders: List<String> = emptyList(),
+    onOpenHistory: () -> Unit = {},
     barLifted: Boolean = false,
     onToggleBar: () -> Unit = {}
 ) {
@@ -107,11 +118,12 @@ fun HomeScreen(
     val kindByPath = remember(appVolumes) {
         appVolumes.associate { it.root.absolutePath to it.kind }
     }
-    val mergedVolumes = remember(volumes, appVolumes) {
+    val mergedVolumes = remember(volumes, appVolumes, kindByPath) {
         val known = volumes.map { it.path }.toSet()
-        volumes + appVolumes
+        (volumes + appVolumes
             .filter { it.root.absolutePath !in known }
-            .mapNotNull { statOfVolume(it.label, it.root) }
+            .mapNotNull { statOfVolume(it.label, it.root) })
+            .sortedBy { kindRank(kindByPath[it.path]) }
     }
 
     RoundedTopScaffold(
@@ -143,11 +155,15 @@ fun HomeScreen(
             item {
                 SectionHeader("Storage")
             }
-            items(mergedVolumes, key = { it.path }) { stats ->
-                StorageCard(stats = stats, kind = kindByPath[stats.path] ?: VolumeKind.INTERNAL, onClick = { onOpenPath(stats.path) })
+            item {
+                StorageCarousel(
+                    volumes = mergedVolumes,
+                    kindByPath = kindByPath,
+                    onOpenPath = onOpenPath
+                )
             }
             item {
-                SectionHeader("Recent folders")
+                ClickableSectionHeader(title = "Recent folders", onClick = onOpenHistory)
             }
             if (recents.isEmpty()) {
                 item {
@@ -217,8 +233,13 @@ private fun folderLabel(file: File): String {
     return file.name.ifEmpty { file.absolutePath }
 }
 
-private fun statOfVolume(label: String, root: File): VolumeStats? {
-    return try {
+private fun kindRank(kind: VolumeKind?): Int = when (kind) {
+    VolumeKind.INTERNAL, null -> 0
+    VolumeKind.SD_CARD -> 1
+    VolumeKind.USB -> 2
+}
+
+private fun statOfVolume(label: String, root: File): VolumeStats? {    return try {
         if (!root.exists()) return null
         val stat = StatFs(root.absolutePath)
         VolumeStats(label, root.absolutePath, stat.availableBytes, stat.totalBytes)
@@ -229,7 +250,82 @@ private fun statOfVolume(label: String, root: File): VolumeStats? {
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-private fun StorageCard(stats: VolumeStats, kind: VolumeKind, onClick: () -> Unit) {
+private fun StorageCarousel(
+    volumes: List<VolumeStats>,
+    kindByPath: Map<String, VolumeKind>,
+    onOpenPath: (String) -> Unit
+) {
+    if (volumes.isEmpty()) return
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        val cardWidth = maxWidth
+        val state = rememberCarouselState { volumes.size }
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            HorizontalUncontainedCarousel(
+                state = state,
+                itemWidth = cardWidth,
+                itemSpacing = 0.dp,
+                contentPadding = PaddingValues(0.dp),
+                userScrollEnabled = true,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(StorageCardHeight)
+            ) { index ->
+                val stats = volumes[index]
+                StorageCard(
+                    stats = stats,
+                    kind = kindByPath[stats.path] ?: VolumeKind.INTERNAL,
+                    onClick = { onOpenPath(stats.path) },
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+            if (volumes.size > 1) {
+                CarouselIndicator(
+                    count = volumes.size,
+                    current = state.currentItem,
+                    modifier = Modifier.padding(top = 10.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CarouselIndicator(count: Int, current: Int, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        repeat(count) { index ->
+            val selected = index == current
+            val dotSize by animateDpAsState(
+                targetValue = if (selected) 8.dp else 6.dp,
+                label = "carouselDot"
+            )
+            Box(
+                modifier = Modifier
+                    .size(dotSize)
+                    .background(
+                        color = if (selected) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                        shape = CircleShape
+                    )
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun StorageCard(
+    stats: VolumeStats,
+    kind: VolumeKind,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
     val progress by animateFloatAsState(
         targetValue = stats.usedFraction,
         animationSpec = ProgressIndicatorDefaults.ProgressAnimationSpec,
@@ -252,9 +348,9 @@ private fun StorageCard(stats: VolumeStats, kind: VolumeKind, onClick: () -> Uni
             contentColor = MaterialTheme.colorScheme.onSecondaryContainer
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-        modifier = Modifier.fillMaxWidth()
+        modifier = modifier
     ) {
-        Box(modifier = Modifier.fillMaxWidth()) {
+        Box(modifier = Modifier.fillMaxSize()) {
             Icon(
                 icon,
                 null,
@@ -344,6 +440,32 @@ private fun StatBadge(
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+        )
+    }
+}
+
+@Composable
+private fun ClickableSectionHeader(title: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.primary,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.weight(1f)
+        )
+        Icon(
+            Icons.Filled.ChevronRight,
+            null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(18.dp)
         )
     }
 }
