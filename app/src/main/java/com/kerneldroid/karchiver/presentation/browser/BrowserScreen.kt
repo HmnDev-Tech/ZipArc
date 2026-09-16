@@ -156,6 +156,7 @@ fun BrowserScreen(
     var openWithApps by remember { mutableStateOf<List<ResolveInfo>>(emptyList()) }
     var pendingExtract by remember { mutableStateOf<File?>(null) }
     var createKind by remember { mutableStateOf<CreateKind?>(null) }
+    var fabMenuExpanded by rememberSaveable { mutableStateOf(false) }
     val pullRefreshState = rememberPullToRefreshState()
     val listState = rememberLazyListState()
     val gridState = rememberLazyGridState()
@@ -269,11 +270,11 @@ fun BrowserScreen(
         floatingActionButton = {
             if (!searchActive && !state.isSelectionMode && vm.clipboard == null) {
                 Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
+                    horizontalAlignment = Alignment.End,
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     ScrollTopButton(
-                        visible = showScrollTop,
+                        visible = showScrollTop && !fabMenuExpanded,
                         onClick = {
                             scope.launch {
                                 if (state.viewMode == ViewMode.LIST) {
@@ -291,6 +292,8 @@ fun BrowserScreen(
                         }
                     )
                     CreateFabMenu(
+                        expanded = fabMenuExpanded,
+                        onExpandedChange = { fabMenuExpanded = it },
                         onCreateFolder = { createKind = CreateKind.FOLDER },
                         onCreateFile = { createKind = CreateKind.FILE }
                     )
@@ -923,10 +926,27 @@ fun BrowserScreen(
 
 @Composable
 private fun ScrollTopButton(visible: Boolean, onClick: () -> Unit) {
+    val motionScheme = MaterialTheme.motionScheme
     AnimatedVisibility(
         visible = visible,
-        enter = slideInVertically() + scaleIn(),
-        exit = slideOutVertically() + scaleOut()
+        enter = slideInVertically(
+            initialOffsetY = { it },
+            animationSpec = motionScheme.fastSpatialSpec()
+        ) + scaleIn(
+            initialScale = 0.8f,
+            animationSpec = motionScheme.fastSpatialSpec()
+        ) + fadeIn(
+            animationSpec = motionScheme.fastEffectsSpec()
+        ),
+        exit = slideOutVertically(
+            targetOffsetY = { it },
+            animationSpec = motionScheme.fastSpatialSpec()
+        ) + scaleOut(
+            targetScale = 0.8f,
+            animationSpec = motionScheme.fastSpatialSpec()
+        ) + fadeOut(
+            animationSpec = motionScheme.fastEffectsSpec()
+        )
     ) {
         SmallFloatingActionButton(
             onClick = onClick,
@@ -939,27 +959,35 @@ private fun ScrollTopButton(visible: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun CreateFabMenu(onCreateFolder: () -> Unit, onCreateFile: () -> Unit) {
-    var expanded by remember { mutableStateOf(false) }
+private fun CreateFabMenu(
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
+    onCreateFolder: () -> Unit,
+    onCreateFile: () -> Unit
+) {
     FloatingActionButtonMenu(
         expanded = expanded,
         button = {
             ToggleFloatingActionButton(
                 checked = expanded,
-                onCheckedChange = { expanded = it }
+                onCheckedChange = onExpandedChange
             ) {
-                val rotation by animateFloatAsState(if (expanded) 45f else 0f, label = "fabRotation")
+                val rotation by animateFloatAsState(
+                    targetValue = if (expanded) 45f else 0f,
+                    animationSpec = MaterialTheme.motionScheme.fastSpatialSpec(),
+                    label = "fabRotation"
+                )
                 Icon(Icons.Filled.Add, "Create", Modifier.rotate(rotation))
             }
         }
     ) {
         FloatingActionButtonMenuItem(
-            onClick = { expanded = false; onCreateFolder() },
+            onClick = { onExpandedChange(false); onCreateFolder() },
             icon = { Icon(Icons.Filled.CreateNewFolder, null) },
             text = { Text("New folder") }
         )
         FloatingActionButtonMenuItem(
-            onClick = { expanded = false; onCreateFile() },
+            onClick = { onExpandedChange(false); onCreateFile() },
             icon = { Icon(Icons.AutoMirrored.Filled.NoteAdd, null) },
             text = { Text("New file") }
         )

@@ -68,6 +68,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
@@ -294,6 +295,8 @@ fun SettingsScreen(
                                 itemsIndexed(seedColors) { index, seed ->
                                 val argb = seed.color.value.toLong()
                                 val selected = !settings.dynamicColor && settings.seedColor == argb
+                                val onSeedColor =
+                                    if (seed.color.luminance() > 0.5f) Color(0xFF1C1B1F) else Color.White
                                 ToggleButton(
                                     checked = selected,
                                     onCheckedChange = {
@@ -307,9 +310,9 @@ fun SettingsScreen(
                                     },
                                     colors = ToggleButtonDefaults.toggleButtonColors(
                                         containerColor = seed.color,
-                                        contentColor = Color.White,
+                                        contentColor = onSeedColor,
                                         checkedContainerColor = seed.color,
-                                        checkedContentColor = Color.White
+                                        checkedContentColor = onSeedColor
                                     ),
                                     modifier = Modifier
                                         .height(40.dp)
