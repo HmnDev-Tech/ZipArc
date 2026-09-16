@@ -54,6 +54,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.contentDescription
@@ -158,6 +159,8 @@ fun BrowserScreen(
     var pendingExtract by remember { mutableStateOf<File?>(null) }
     var createKind by remember { mutableStateOf<CreateKind?>(null) }
     var fabMenuExpanded by rememberSaveable { mutableStateOf(false) }
+    var fabMenuHeight by remember { mutableIntStateOf(0) }
+    var fabMenuCollapsedHeight by remember { mutableIntStateOf(Int.MAX_VALUE) }
     val pullRefreshState = rememberPullToRefreshState()
     val listState = rememberLazyListState()
     val gridState = rememberLazyGridState()
@@ -274,7 +277,7 @@ fun BrowserScreen(
                     horizontalAlignment = Alignment.End,
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    if (!fabMenuExpanded) {
+                    if (!fabMenuExpanded && fabMenuHeight <= fabMenuCollapsedHeight) {
                         ScrollTopButton(
                             visible = showScrollTop,
                             onClick = {
@@ -298,7 +301,13 @@ fun BrowserScreen(
                         expanded = fabMenuExpanded,
                         onExpandedChange = { fabMenuExpanded = it },
                         onCreateFolder = { createKind = CreateKind.FOLDER },
-                        onCreateFile = { createKind = CreateKind.FILE }
+                        onCreateFile = { createKind = CreateKind.FILE },
+                        modifier = Modifier.onSizeChanged { size ->
+                            fabMenuHeight = size.height
+                            if (!fabMenuExpanded && size.height < fabMenuCollapsedHeight) {
+                                fabMenuCollapsedHeight = size.height
+                            }
+                        }
                     )
                 }
             }
@@ -967,10 +976,12 @@ private fun CreateFabMenu(
     expanded: Boolean,
     onExpandedChange: (Boolean) -> Unit,
     onCreateFolder: () -> Unit,
-    onCreateFile: () -> Unit
+    onCreateFile: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     FloatingActionButtonMenu(
         expanded = expanded,
+        modifier = modifier,
         button = {
             ToggleFloatingActionButton(
                 checked = expanded,

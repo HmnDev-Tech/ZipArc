@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -84,6 +85,8 @@ private object RootRoute {
     const val SETTINGS = "settings"
 }
 
+private val DrawerSheetWidth = 300.dp
+
 @Composable
 private fun DrawerSectionLabel(text: String) {
     Text(
@@ -129,9 +132,11 @@ private fun DeviceDrawerRow(
         }
         if (usedBytes != null && totalBytes != null && totalBytes > 0) {
             Text(
-                text = "${formatBytes(usedBytes)} used of ${formatBytes(totalBytes)}",
+                text = "${formatBytes(usedBytes)} / ${formatBytes(totalBytes)}",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(top = 6.dp)
             )
             LinearProgressIndicator(
@@ -278,7 +283,7 @@ fun KArchiverRoot() {
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
-            ModalDrawerSheet {
+            ModalDrawerSheet(modifier = Modifier.width(DrawerSheetWidth)) {
                 Spacer(modifier = Modifier.height(30.dp))
                 destinations.forEach { destination ->
                     CustomNavigationDrawerItem(
