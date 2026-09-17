@@ -115,12 +115,10 @@ jobs:
             exit 0
           fi
           printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/karchiver-release.jks"
-          {
-            echo "KARCHIVER_KEYSTORE=$RUNNER_TEMP/karchiver-release.jks"
-            echo "KARCHIVER_STORE_PASSWORD=$STORE_PASSWORD"
-            echo "KARCHIVER_KEY_ALIAS=$KEY_ALIAS"
-            echo "KARCHIVER_KEY_PASSWORD=$KEY_PASSWORD"
-          } >> "$GITHUB_ENV"
+          export KARCHIVER_KEYSTORE="$RUNNER_TEMP/karchiver-release.jks"
+          export KARCHIVER_STORE_PASSWORD="$STORE_PASSWORD"
+          export KARCHIVER_KEY_ALIAS="$KEY_ALIAS"
+          export KARCHIVER_KEY_PASSWORD="$KEY_PASSWORD"
           ./gradlew :app:assembleRelease --no-daemon -x lint --stacktrace
 
       - name: Verify signatures
@@ -130,8 +128,12 @@ jobs:
           for apk in app/build/outputs/apk/*/*.apk; do
             [ -f "$apk" ] || continue
             echo "== $apk"
-            "$APKSIGNER" verify --verbose --print-certs "$apk" | grep -E "Verifies|Verified using v2|Signer #1 certificate SHA-256 digest" || true
+            "$APKSIGNER" verify --verbose --print-certs "$apk" | grep -E "Verifies|Verified using v2|Signer: certificate (DN|SHA-256 digest)" || true
           done
+          if [ "$GITHUB_EVENT_NAME" != "pull_request" ] && ls app/build/outputs/apk/release/*-unsigned.apk > /dev/null 2>&1; then
+            echo "::error::release APK was produced without a signature"
+            exit 1
+          fi
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v6
