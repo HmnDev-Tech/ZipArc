@@ -48,9 +48,11 @@ APK: `app/build/outputs/apk/debug/app-debug.apk`. Tests:
 cd rust && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
 ```
 
-## CI and signing
+## CI, releases and signing
 
 `.github/workflows/build.yml` builds on pushes to `main`, on pull requests, and on demand. Debug APKs are signed with a throwaway keystore generated for every run; release APKs are built only on pushes and signed with the keystore kept in repository secrets. Signing material is read from `KARCHIVER_*` environment variables, so nothing secret is committed, and pull requests never touch it. The run summary lists the size and SHA-256 of each APK.
+
+APKs are available in two places: as workflow artifacts under Actions, and attached to tagged versions on the [Releases](https://github.com/sysrv64/KArchiver/releases) page. Release entries list the file names, sizes and SHA-256 values.
 
 ## License
 

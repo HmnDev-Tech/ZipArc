@@ -16,14 +16,24 @@ body:
           required: true
         - label: I searched existing issues and QA.md for this problem.
           required: true
-        - label: For install or signature failures I checked the APK size and SHA-256 against the CI run summary.
+        - label: For install or signature failures I checked the APK size and SHA-256 from the release entry or the CI run summary.
           required: false
   - type: input
     id: version
     attributes:
       label: App version and build
-      description: Version name from Settings, plus the Actions run number or commit for the APK you installed.
-      placeholder: 1.0.0-alpha01, run 35219609166
+      description: Version name from Settings, plus the release tag or the Actions run number for the APK you installed.
+      placeholder: 1.0.0-alpha01, v1.0.0-alpha01 or run 35219609166
+    validations:
+      required: true
+  - type: dropdown
+    id: source
+    attributes:
+      label: Where the APK came from
+      options:
+        - Releases page
+        - Actions artifact
+        - built from source
     validations:
       required: true
   - type: dropdown
@@ -31,9 +41,8 @@ body:
     attributes:
       label: Build type
       options:
-        - debug APK from Actions
-        - release APK from Actions
-        - built from source
+        - debug APK
+        - release APK
     validations:
       required: true
   - type: input

@@ -32,6 +32,7 @@ Commands and results:
 - [ ] Touches storage access (SAF, elevation, permissions)
 - [ ] Touches CI, signing or secrets handling
 - [ ] UI strings only, no behavior change
+- [ ] User-visible change that should be listed in the next release notes
 
 ## Checklist
 

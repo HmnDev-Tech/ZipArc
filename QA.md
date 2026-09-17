@@ -4,10 +4,10 @@
 Yes. It was developed in [opencode](https://opencode.ai).
 
 **Where do I get an APK, and why does the debug signature change every build?**
-GitHub → Actions → the latest successful run on `main` → artifacts. `KArchiver-debug` exists for every run, `KArchiver-release` only for pushes to `main`. Debug APKs are signed with a throwaway keystore generated for that run, so a new debug APK cannot be installed over an older debug install: uninstall the previous build first. Release APKs are signed with a stable key and update normally. Each run summary lists the byte size and SHA-256 of every APK.
+Two places: the [Releases](https://github.com/sysrv64/KArchiver/releases) page (tagged versions with both APKs, their byte sizes and SHA-256) and GitHub → Actions → the latest successful run on `main` → artifacts. `KArchiver-debug` exists for every run, `KArchiver-release` only for pushes to `main`. Debug APKs are signed with a throwaway keystore generated for that run, so a new debug APK cannot be installed over an older debug install: uninstall the previous build first. Release APKs are signed with a stable key and update normally.
 
 **Installation fails with "APK Signature Scheme v2: SHA-256 digest of contents did not verify" or `INSTALL_PARSE_FAILED_NO_CERTIFICATES`.**
-The APK file was modified after it was built. Debug APKs are signed with v2 only, and v2 signs the whole file, so repacking, re-compression, "optimizing", an incomplete download or a copy to a failing SD card breaks it. Compare size and SHA-256 with the run summary, re-download the artifact, extract it with a plain extractor, keep it in internal storage and install again, or use `adb install -r app-debug.apk`.
+The APK file was modified after it was built. Debug APKs are signed with v2 only, and v2 signs the whole file, so repacking, re-compression, "optimizing", an incomplete download or a copy to a failing SD card breaks it. Compare size and SHA-256 with the release entry or the run summary, re-download the artifact, extract it with a plain extractor, keep it in internal storage and install again, or use `adb install -r app-debug.apk`.
 
 **Does the app need the internet or send any data?**
 No. The app does not request the `INTERNET` permission. There is no analytics, telemetry or ads, and history stays in a local database inside the app's private storage.
