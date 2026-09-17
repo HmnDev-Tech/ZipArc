@@ -1,0 +1,106 @@
+name: Bug report
+description: Report a reproducible bug in KArchiver.
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this only for reproducible problems. Read QA.md first, and include enough detail to reproduce the bug.
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before submitting
+      options:
+        - label: I am running a recent build and stated its version below.
+          required: true
+        - label: I searched existing issues and QA.md for this problem.
+          required: true
+        - label: For install or signature failures I checked the APK size and SHA-256 against the CI run summary.
+          required: false
+  - type: input
+    id: version
+    attributes:
+      label: App version and build
+      description: Version name from Settings, plus the Actions run number or commit for the APK you installed.
+      placeholder: 1.0.0-alpha01, run 35219609166
+    validations:
+      required: true
+  - type: dropdown
+    id: build_type
+    attributes:
+      label: Build type
+      options:
+        - debug APK from Actions
+        - release APK from Actions
+        - built from source
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Device and Android version
+      placeholder: Pixel 8, Android 16
+    validations:
+      required: true
+  - type: dropdown
+    id: access
+    attributes:
+      label: Storage setup in use
+      description: Select everything that applies.
+      multiple: true
+      options:
+        - Internal storage
+        - SD card
+        - USB OTG
+        - SAF folder grant
+        - All files access
+        - Shizuku
+        - Root
+    validations:
+      required: true
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What broke, in one or two sentences?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open ...
+        2. Select ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include the exact error text when there is one.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant logcat lines (`adb logcat -s KArchiver:D` or the crash stack trace). Do not paste whole logs.
+      render: shell
+    validations:
+      required: false
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Archive format and size, filesystem (FAT32/exFAT), screenshots, or a minimal sample archive if it is needed to reproduce.
+    validations:
+      required: false

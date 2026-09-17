@@ -1,0 +1,57 @@
+name: Feature request
+description: Propose a scoped change to KArchiver.
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and QA.md for this request.
+          required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What can you not do today, and in which situation?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: The smallest change that would solve it.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Storage browser
+        - Archive open and extract
+        - Archive editing
+        - Search
+        - File properties
+        - Elevation (Shizuku or root)
+        - UI and theming
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds or other apps you tried, if any.
+    validations:
+      required: false
