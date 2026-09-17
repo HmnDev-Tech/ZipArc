@@ -30,18 +30,15 @@ import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.FolderOpen
-import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.ViewAgenda
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
@@ -98,11 +95,14 @@ import java.io.IOException
 fun ArchiveExplorerRoute(
     archive: File,
     password: String,
+    viewMode: ViewMode,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
     onExitToFolder: (File) -> Unit = {}
 ) {
-    val vm: ArchiveExplorerViewModel = viewModel(key = "explorer:" + archive.absolutePath) {
+    val vm: ArchiveExplorerViewModel = viewModel(
+        key = "explorer:" + archive.absolutePath + ":" + password
+    ) {
         ArchiveExplorerViewModel(archive, password)
     }
     val state by vm.state.collectAsStateWithLifecycle()
@@ -114,7 +114,6 @@ fun ArchiveExplorerRoute(
     val canEdit = writable && !isRarArchive(archive)
     val selectionMode = state.selected.isNotEmpty()
 
-    var viewMode by rememberSaveable { mutableStateOf(ViewMode.LIST) }
     var addError by remember(archive.absolutePath) { mutableStateOf<String?>(null) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
     var showCompressDialog by remember { mutableStateOf(false) }
@@ -391,26 +390,12 @@ fun ArchiveExplorerRoute(
                         overflow = TextOverflow.Ellipsis
                     )
                 },
-                navigationIcon = {
-                    IconButton(onClick = {
-                        if (state.insidePath.isEmpty()) onClose() else vm.navigateUp()
-                    }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
-                    }
-                },
+                navigationIcon = {},
                 actions = {
                     if (canEdit) {
                         IconButton(onClick = { addPicker.launch(arrayOf("*/*")) }) {
                             Icon(Icons.Filled.Add, "Add files")
                         }
-                    }
-                    IconButton(onClick = {
-                        viewMode = if (viewMode == ViewMode.LIST) ViewMode.GRID else ViewMode.LIST
-                    }) {
-                        Icon(
-                            if (viewMode == ViewMode.LIST) Icons.Filled.GridView else Icons.Filled.ViewAgenda,
-                            "Toggle view"
-                        )
                     }
                 }
             )

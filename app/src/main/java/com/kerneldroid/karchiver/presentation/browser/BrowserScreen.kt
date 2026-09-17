@@ -745,22 +745,12 @@ fun BrowserScreen(
 
     preview.file?.let { file ->
         PreviewSheet(
-            fileName = file.name,
             archive = file,
             preview = preview,
+            viewMode = state.viewMode,
             onDismiss = vm::closePreview,
             onExitToFolder = { vm.closePreview(); vm.navigateTo(it) },
-            onVerify = { vm.verifyArchive(file, preview.passwordUsed) },
-            onUnlock = { password -> vm.openPreview(file, password) },
-            onExtract = {
-                val usedPassword = preview.passwordUsed
-                vm.closePreview()
-                vm.startExtract(context, file, usedPassword) { r ->
-                    scope.launch {
-                        snackbar.showSnackbar(vm.archiveOpMessage(r.exceptionOrNull(), "Extracted", "Extraction failed"))
-                    }
-                }
-            }
+            onUnlock = { password -> vm.openPreview(file, password) }
         )
     }
 
@@ -1608,170 +1598,59 @@ private fun PasswordField(
 
 @Composable
 private fun PreviewSheet(
-    fileName: String,
     archive: File,
     preview: ArchivePreviewUiState,
+    viewMode: ViewMode,
     onDismiss: () -> Unit,
     onExitToFolder: (File) -> Unit,
-    onVerify: () -> Unit,
-    onUnlock: (String) -> Unit,
-    onExtract: () -> Unit
+    onUnlock: (String) -> Unit
 ) {
-    var password by remember(fileName) { mutableStateOf("") }
-    var fullMode by remember(fileName) { mutableStateOf(false) }
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
-    val scope = rememberCoroutineScope()
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
-        if (fullMode || sheetState.targetValue == SheetValue.Expanded) {
-            ArchiveExplorerRoute(
-                archive = archive,
-                password = preview.passwordUsed,
-                onClose = { fullMode = false; onDismiss() },
-                modifier = Modifier.fillMaxHeight(),
-                onExitToFolder = onExitToFolder
-            )
-        } else {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(
-                    text = fileName,
-                    style = MaterialTheme.typography.titleLarge,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
-                TextButton(onClick = onVerify) { Text("Verify") }
-                FilledTonalButton(onClick = {
-                    fullMode = true
-                    scope.launch { sheetState.expand() }
-                }) {
-                    Icon(Icons.Filled.FolderOpen, null, Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("Open")
-                }
-                FilledTonalButton(onClick = onExtract) {
-                    Icon(Icons.Filled.FolderOpen, null, Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("Extract")
-                }
-            }
-            val listing = preview.listing
-            val needsPassword = preview.error == "Password required" ||
-                preview.error == "Wrong password" ||
-                (listing != null && listing.encrypted && preview.passwordUsed.isEmpty())
-            when {
-                preview.isLoading -> {
-                    Box(
-                        modifier = Modifier.fillMaxWidth().height(160.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        LoadingIndicator()
-                    }
-                }
-                preview.error != null && !needsPassword -> {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Icon(Icons.Filled.ErrorOutline, null, tint = MaterialTheme.colorScheme.error)
-                        Text(
-                            text = preview.error,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.error
-                        )
-                    }
-                }
-                needsPassword -> {
-                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Icon(Icons.Filled.Lock, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text(
-                                text = preview.error ?: "Password required",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = if (preview.error == "Wrong password") MaterialTheme.colorScheme.error
-                                else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        PasswordField(
-                            value = password,
-                            onValueChange = { password = it },
-                            label = "Password"
-                        )
-                        Button(
-                            onClick = {
-                                val entered = password
-                                password = ""
-                                onUnlock(entered)
-                            },
-                            enabled = password.isNotEmpty()
-                        ) { Text("Unlock") }
-                    }
-                }
-                listing != null && listing.entries.isEmpty() -> {
-                    Box(
-                        modifier = Modifier.fillMaxWidth().height(120.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "Archive is empty",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-                listing != null -> {
+        ArchiveExplorerRoute(
+            archive = archive,
+            password = preview.passwordUsed,
+            viewMode = viewMode,
+            onClose = onDismiss,
+            modifier = Modifier.fillMaxHeight(),
+            onExitToFolder = onExitToFolder
+        )
+    }
+    val needsPassword = preview.error == "Password required" || preview.error == "Wrong password" ||
+        (preview.listing != null && preview.listing.encrypted && preview.passwordUsed.isEmpty())
+    if (needsPassword) {
+        var password by remember(archive.absolutePath) { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            icon = { Icon(Icons.Filled.Lock, null) },
+            title = { Text(archive.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(
-                        text = "${listing.entries.size} items",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        text = if (preview.error == "Wrong password") "Wrong password" else "Password required",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (preview.error == "Wrong password") MaterialTheme.colorScheme.error
+                        else MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    LazyColumn(
-                        modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        items(listing.entries, key = { it.name }) { entry ->
-                            ListItem(
-                                leadingContent = {
-                                    Icon(
-                                        if (entry.isDir) Icons.Filled.Folder else Icons.AutoMirrored.Filled.InsertDriveFile,
-                                        null,
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                },
-                                supportingContent = {
-                                    Text(
-                                        text = if (entry.isDir) "Folder" else formatSize(entry.size),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            ) {
-                                Text(
-                                    text = entry.name,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        }
-                    }
+                    PasswordField(
+                        value = password,
+                        onValueChange = { password = it },
+                        label = "Password"
+                    )
                 }
-            }
-        }
-        }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val entered = password
+                        password = ""
+                        onUnlock(entered)
+                    },
+                    enabled = password.isNotEmpty()
+                ) { Text("Unlock") }
+            },
+            dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+        )
     }
 }
 
