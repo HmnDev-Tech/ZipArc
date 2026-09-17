@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="app/src/main/res/raw/karchiver_expressive.svg" width="300" alt="KArchiver">
+  <img src="app/src/main/res/raw/karchiver_expressive.svg" width="112" height="84" alt="KArchiver">
 </p>
 
 # KArchiver
