@@ -1,4 +1,4 @@
-name: Build KArchiver
+name: Build ZipArc
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: karchiver-${{ github.ref }}
+  group: ziparc-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -85,15 +85,15 @@ jobs:
         run: |
           set -e
           export DEBUG_STORE_PASSWORD=$(head -c 48 /dev/urandom | base64 | tr -d '/+=' | head -c 40)
-          keytool -genkeypair -v -keystore "$RUNNER_TEMP/karchiver-debug.jks" -alias karchiver-debug \
+          keytool -genkeypair -v -keystore "$RUNNER_TEMP/ziparc-debug.jks" -alias ziparc-debug \
             -keyalg RSA -keysize 2048 -validity 30 -storetype PKCS12 \
             -storepass:env DEBUG_STORE_PASSWORD -keypass:env DEBUG_STORE_PASSWORD \
-            -dname "CN=KArchiver Debug, OU=CI, O=KArchiver, C=US" 2>&1 | tail -2
+            -dname "CN=ZipArc Debug, OU=CI, O=ZipArc, C=US" 2>&1 | tail -2
           {
-            echo "KARCHIVER_DEBUG_KEYSTORE=$RUNNER_TEMP/karchiver-debug.jks"
-            echo "KARCHIVER_DEBUG_KEY_ALIAS=karchiver-debug"
-            echo "KARCHIVER_DEBUG_STORE_PASSWORD=$DEBUG_STORE_PASSWORD"
-            echo "KARCHIVER_DEBUG_KEY_PASSWORD=$DEBUG_STORE_PASSWORD"
+            echo "ZIPARC_DEBUG_KEYSTORE=$RUNNER_TEMP/ziparc-debug.jks"
+            echo "ZIPARC_DEBUG_KEY_ALIAS=ziparc-debug"
+            echo "ZIPARC_DEBUG_STORE_PASSWORD=$DEBUG_STORE_PASSWORD"
+            echo "ZIPARC_DEBUG_KEY_PASSWORD=$DEBUG_STORE_PASSWORD"
           } >> "$GITHUB_ENV"
 
       - name: Build debug APK
@@ -104,21 +104,21 @@ jobs:
       - name: Build release APK
         if: github.event_name != 'pull_request'
         env:
-          KEYSTORE_B64: ${{ secrets.KARCHIVER_KEYSTORE_BASE64 }}
-          STORE_PASSWORD: ${{ secrets.KARCHIVER_STORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KARCHIVER_KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KARCHIVER_KEY_PASSWORD }}
+          KEYSTORE_B64: ${{ secrets.ZIPARC_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ZIPARC_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ZIPARC_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ZIPARC_KEY_PASSWORD }}
         run: |
           set -e
           if [ -z "$KEYSTORE_B64" ]; then
             echo "::warning::release keystore is not configured, release APK skipped"
             exit 0
           fi
-          printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/karchiver-release.jks"
-          export KARCHIVER_KEYSTORE="$RUNNER_TEMP/karchiver-release.jks"
-          export KARCHIVER_STORE_PASSWORD="$STORE_PASSWORD"
-          export KARCHIVER_KEY_ALIAS="$KEY_ALIAS"
-          export KARCHIVER_KEY_PASSWORD="$KEY_PASSWORD"
+          printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/ziparc-release.jks"
+          export ZIPARC_KEYSTORE="$RUNNER_TEMP/ziparc-release.jks"
+          export ZIPARC_STORE_PASSWORD="$STORE_PASSWORD"
+          export ZIPARC_KEY_ALIAS="$KEY_ALIAS"
+          export ZIPARC_KEY_PASSWORD="$KEY_PASSWORD"
           ./gradlew :app:assembleRelease --no-daemon -x lint --stacktrace
 
       - name: Verify signatures
@@ -138,7 +138,7 @@ jobs:
       - name: Upload debug APK
         uses: actions/upload-artifact@v6
         with:
-          name: KArchiver-debug
+          name: ZipArc-debug
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           compression-level: 0
@@ -146,7 +146,7 @@ jobs:
       - name: Upload release APK
         uses: actions/upload-artifact@v6
         with:
-          name: KArchiver-release
+          name: ZipArc-release
           path: app/build/outputs/apk/release/*.apk
           if-no-files-found: ignore
           compression-level: 0

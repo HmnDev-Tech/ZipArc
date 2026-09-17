@@ -451,7 +451,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "karchiver_rs"
+name = "ziparc_rs"
 version = "0.1.0"
 dependencies = [
  "bzip2",

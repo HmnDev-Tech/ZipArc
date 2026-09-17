@@ -2,9 +2,9 @@ use std::fs;
 use std::io::Write;
 use std::path::Path;
 
-use karchiver_rs::backend;
-use karchiver_rs::content_search::scan_reader;
-use karchiver_rs::format::Format;
+use ziparc_rs::backend;
+use ziparc_rs::content_search::scan_reader;
+use ziparc_rs::format::Format;
 use tempfile::tempdir;
 
 fn build_zip(path: &Path) {

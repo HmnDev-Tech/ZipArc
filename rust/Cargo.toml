@@ -1,10 +1,10 @@
 [package]
-name = "karchiver_rs"
+name = "ziparc_rs"
 version = "0.1.0"
 edition = "2024"
-description = "KArchiver Rust core: secure archive compress/extract/list"
+description = "ZipArc Rust core: secure archive compress/extract/list"
 license = "Apache-2.0"
-repository = "https://github.com/sysrv64/KArchiver"
+repository = "https://github.com/HmnDev-Tech/ZipArc"
 
 [lib]
 crate-type = ["cdylib", "rlib"]

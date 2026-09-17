@@ -1,12 +1,12 @@
 use std::io::Write;
 
-use karchiver_rs::backend;
-use karchiver_rs::format::Format;
-use karchiver_rs::io_util::Limits;
+use ziparc_rs::backend;
+use ziparc_rs::format::Format;
+use ziparc_rs::io_util::Limits;
 
 fn make_tree(root: &std::path::Path) {
     std::fs::create_dir_all(root.join("sub")).unwrap();
-    std::fs::write(root.join("hello.txt"), b"hello karchiver").unwrap();
+    std::fs::write(root.join("hello.txt"), b"hello ziparc").unwrap();
     std::fs::write(root.join("sub/nested.bin"), [0u8, 1, 2, 3, 4, 255]).unwrap();
 }
 

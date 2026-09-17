@@ -124,7 +124,7 @@ fn finish_void(env: &mut JNIEnv, op: &str, outcome: std::thread::Result<Result<(
 
 /// `compress(srcPaths: Array<String>, destPath: String): Int`
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_compress(
+pub extern "system" fn Java_com_hmndev_ziparc_data_RustBridge_compress(
     mut env: JNIEnv,
     _class: JClass,
     src_array: JObjectArray,
@@ -142,7 +142,7 @@ pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_compress(
 
 /// `extract(archivePath: String, destDir: String): Int`
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_extract(
+pub extern "system" fn Java_com_hmndev_ziparc_data_RustBridge_extract(
     mut env: JNIEnv,
     _class: JClass,
     archive_str: JString,
@@ -159,7 +159,7 @@ pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_extract(
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_extractFiltered(
+pub extern "system" fn Java_com_hmndev_ziparc_data_RustBridge_extractFiltered(
     mut env: JNIEnv,
     _class: JClass,
     archive_str: JString,
@@ -178,7 +178,7 @@ pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_extractFil
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_extractFilteredWithPassword(
+pub extern "system" fn Java_com_hmndev_ziparc_data_RustBridge_extractFilteredWithPassword(
     mut env: JNIEnv,
     _class: JClass,
     archive_str: JString,
@@ -208,7 +208,7 @@ pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_extractFil
 
 /// `listArchive(archivePath: String): Array<String>`
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_listArchive<'local>(
+pub extern "system" fn Java_com_hmndev_ziparc_data_RustBridge_listArchive<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
     archive_str: JString<'local>,
@@ -290,7 +290,7 @@ fn preview_to_json(listing: &crate::backend::PreviewListing) -> Result<String> {
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_listArchiveDetailed<
+pub extern "system" fn Java_com_hmndev_ziparc_data_RustBridge_listArchiveDetailed<
     'local,
 >(
     mut env: JNIEnv<'local>,
@@ -324,7 +324,7 @@ pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_listArchiv
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_cancel(
+pub extern "system" fn Java_com_hmndev_ziparc_data_RustBridge_cancel(
     _env: JNIEnv,
     _class: JClass,
 ) {
@@ -332,7 +332,7 @@ pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_cancel(
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_getProgress<'local>(
+pub extern "system" fn Java_com_hmndev_ziparc_data_RustBridge_getProgress<'local>(
     env: JNIEnv<'local>,
     _class: JClass<'local>,
 ) -> JLongArray<'local> {
@@ -348,7 +348,7 @@ pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_getProgres
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_compressWithPassword(
+pub extern "system" fn Java_com_hmndev_ziparc_data_RustBridge_compressWithPassword(
     mut env: JNIEnv,
     _class: JClass,
     src_array: JObjectArray,
@@ -370,7 +370,7 @@ pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_compressWi
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_extractWithPassword(
+pub extern "system" fn Java_com_hmndev_ziparc_data_RustBridge_extractWithPassword(
     mut env: JNIEnv,
     _class: JClass,
     archive_str: JString,
@@ -392,7 +392,7 @@ pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_extractWit
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_listArchiveDetailedWithPassword<
+pub extern "system" fn Java_com_hmndev_ziparc_data_RustBridge_listArchiveDetailedWithPassword<
     'local,
 >(
     mut env: JNIEnv<'local>,
@@ -439,7 +439,7 @@ pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_listArchiv
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_testArchiveWithPassword<
+pub extern "system" fn Java_com_hmndev_ziparc_data_RustBridge_testArchiveWithPassword<
     'local,
 >(
     mut env: JNIEnv<'local>,
@@ -514,7 +514,7 @@ fn password_required_json() -> Result<String> {
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_testArchive<'local>(
+pub extern "system" fn Java_com_hmndev_ziparc_data_RustBridge_testArchive<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
     archive_str: JString<'local>,
@@ -676,7 +676,7 @@ fn finish_json_string<'local>(
 
 /// `extractFd(fd: Int, destDir: String): Int`
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_extractFd(
+pub extern "system" fn Java_com_hmndev_ziparc_data_RustBridge_extractFd(
     mut env: JNIEnv,
     _class: JClass,
     fd: jint,
@@ -693,7 +693,7 @@ pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_extractFd(
 
 /// `extractWithPasswordFd(fd: Int, destDir: String, password: String): Int`
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_extractWithPasswordFd(
+pub extern "system" fn Java_com_hmndev_ziparc_data_RustBridge_extractWithPasswordFd(
     mut env: JNIEnv,
     _class: JClass,
     fd: jint,
@@ -714,7 +714,7 @@ pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_extractWit
 
 /// `listArchiveDetailedFd(fd: Int): String` (JSON preview)
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_listArchiveDetailedFd<
+pub extern "system" fn Java_com_hmndev_ziparc_data_RustBridge_listArchiveDetailedFd<
     'local,
 >(
     mut env: JNIEnv<'local>,
@@ -731,7 +731,7 @@ pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_listArchiv
 
 /// `listArchiveDetailedWithPasswordFd(fd: Int, password: String): String`
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_listArchiveDetailedWithPasswordFd<
+pub extern "system" fn Java_com_hmndev_ziparc_data_RustBridge_listArchiveDetailedWithPasswordFd<
     'local,
 >(
     mut env: JNIEnv<'local>,
@@ -752,7 +752,7 @@ pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_listArchiv
 
 /// `testArchiveFd(fd: Int): String` (JSON report)
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_testArchiveFd<'local>(
+pub extern "system" fn Java_com_hmndev_ziparc_data_RustBridge_testArchiveFd<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
     fd: jint,
@@ -767,7 +767,7 @@ pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_testArchiv
 
 /// `testArchiveWithPasswordFd(fd: Int, password: String): String`
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_testArchiveWithPasswordFd<
+pub extern "system" fn Java_com_hmndev_ziparc_data_RustBridge_testArchiveWithPasswordFd<
     'local,
 >(
     mut env: JNIEnv<'local>,
@@ -787,7 +787,7 @@ pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_testArchiv
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_searchArchiveContent<
+pub extern "system" fn Java_com_hmndev_ziparc_data_RustBridge_searchArchiveContent<
     'local,
 >(
     mut env: JNIEnv<'local>,
@@ -818,7 +818,7 @@ pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_searchArch
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_searchArchiveContentFd<
+pub extern "system" fn Java_com_hmndev_ziparc_data_RustBridge_searchArchiveContentFd<
     'local,
 >(
     mut env: JNIEnv<'local>,
@@ -849,7 +849,7 @@ pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_searchArch
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_deleteArchiveEntries(
+pub extern "system" fn Java_com_hmndev_ziparc_data_RustBridge_deleteArchiveEntries(
     mut env: JNIEnv,
     _class: JClass,
     archive_str: JString,
@@ -866,7 +866,7 @@ pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_deleteArch
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_deleteArchiveEntriesWithPassword(
+pub extern "system" fn Java_com_hmndev_ziparc_data_RustBridge_deleteArchiveEntriesWithPassword(
     mut env: JNIEnv,
     _class: JClass,
     archive_str: JString,
@@ -888,7 +888,7 @@ pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_deleteArch
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_renameArchiveEntry(
+pub extern "system" fn Java_com_hmndev_ziparc_data_RustBridge_renameArchiveEntry(
     mut env: JNIEnv,
     _class: JClass,
     archive_str: JString,
@@ -907,7 +907,7 @@ pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_renameArch
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_renameArchiveEntryWithPassword(
+pub extern "system" fn Java_com_hmndev_ziparc_data_RustBridge_renameArchiveEntryWithPassword(
     mut env: JNIEnv,
     _class: JClass,
     archive_str: JString,
@@ -931,7 +931,7 @@ pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_renameArch
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_addFilesToArchive(
+pub extern "system" fn Java_com_hmndev_ziparc_data_RustBridge_addFilesToArchive(
     mut env: JNIEnv,
     _class: JClass,
     archive_str: JString,
@@ -950,7 +950,7 @@ pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_addFilesTo
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_addFilesToArchiveWithPassword(
+pub extern "system" fn Java_com_hmndev_ziparc_data_RustBridge_addFilesToArchiveWithPassword(
     mut env: JNIEnv,
     _class: JClass,
     archive_str: JString,

@@ -1,9 +1,9 @@
 use std::fs;
 use std::path::Path;
 
-use karchiver_rs::backend;
-use karchiver_rs::format::Format;
-use karchiver_rs::io_util::Limits;
+use ziparc_rs::backend;
+use ziparc_rs::format::Format;
+use ziparc_rs::io_util::Limits;
 use tempfile::tempdir;
 
 fn make_tree(root: &Path) {

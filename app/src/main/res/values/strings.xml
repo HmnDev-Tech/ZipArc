@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">KArchiver</string>
+    <string name="app_name">ZipArc</string>
     <string name="search_hint">Search files and archives...</string>
     <string name="sort_name">Name</string>
     <string name="sort_date">Date</string>

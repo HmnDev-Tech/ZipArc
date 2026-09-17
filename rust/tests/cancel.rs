@@ -1,9 +1,9 @@
 use std::io::Write;
 
-use karchiver_rs::backend;
-use karchiver_rs::error::ArchiveError;
-use karchiver_rs::format::Format;
-use karchiver_rs::io_util::{Limits, clear_cancel, request_cancel};
+use ziparc_rs::backend;
+use ziparc_rs::error::ArchiveError;
+use ziparc_rs::format::Format;
+use ziparc_rs::io_util::{Limits, clear_cancel, request_cancel};
 
 #[test]
 fn extract_zip_is_cancellable_mid_way() {

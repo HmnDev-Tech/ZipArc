@@ -1,9 +1,9 @@
 use std::fs;
 
-use karchiver_rs::backend;
-use karchiver_rs::error::ArchiveError;
-use karchiver_rs::format::Format;
-use karchiver_rs::io_util::Limits;
+use ziparc_rs::backend;
+use ziparc_rs::error::ArchiveError;
+use ziparc_rs::format::Format;
+use ziparc_rs::io_util::Limits;
 
 const PASSWORD: &str = "correct-horse-7";
 const WRONG: &str = "wrong-password-0";

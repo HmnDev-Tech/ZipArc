@@ -7,34 +7,34 @@ plugins {
 
 fun envValue(name: String): String? = System.getenv(name)?.takeIf { it.isNotBlank() }
 
-val releaseKeystore = envValue("KARCHIVER_KEYSTORE")
-val ephemeralDebugKeystore = envValue("KARCHIVER_DEBUG_KEYSTORE")
+val releaseKeystore = envValue("ZIPARC_KEYSTORE")
+val ephemeralDebugKeystore = envValue("ZIPARC_DEBUG_KEYSTORE")
 
 android {
-    namespace = "com.kerneldroid.karchiver"
+    namespace = "com.hmndev.ziparc"
     compileSdk = 37
 
     signingConfigs {
         if (releaseKeystore != null) {
             create("release") {
                 storeFile = file(releaseKeystore)
-                storePassword = envValue("KARCHIVER_STORE_PASSWORD")
-                keyAlias = envValue("KARCHIVER_KEY_ALIAS")
-                keyPassword = envValue("KARCHIVER_KEY_PASSWORD")
+                storePassword = envValue("ZIPARC_STORE_PASSWORD")
+                keyAlias = envValue("ZIPARC_KEY_ALIAS")
+                keyPassword = envValue("ZIPARC_KEY_PASSWORD")
             }
         }
         if (ephemeralDebugKeystore != null) {
             create("debugEphemeral") {
                 storeFile = file(ephemeralDebugKeystore)
-                storePassword = envValue("KARCHIVER_DEBUG_STORE_PASSWORD")
-                keyAlias = envValue("KARCHIVER_DEBUG_KEY_ALIAS")
-                keyPassword = envValue("KARCHIVER_DEBUG_KEY_PASSWORD")
+                storePassword = envValue("ZIPARC_DEBUG_STORE_PASSWORD")
+                keyAlias = envValue("ZIPARC_DEBUG_KEY_ALIAS")
+                keyPassword = envValue("ZIPARC_DEBUG_KEY_PASSWORD")
             }
         }
     }
 
     defaultConfig {
-        applicationId = "com.kerneldroid.karchiver"
+        applicationId = "com.hmndev.ziparc"
         minSdk = 26
         targetSdk = 37
         versionCode = 1

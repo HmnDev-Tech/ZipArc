@@ -1,10 +1,10 @@
-# KArchiver — QA
+# ZipArc — QA
 
 **Was this project built with AI?**
 Yes. It was developed in [opencode](https://opencode.ai).
 
 **Where do I get an APK, and why does the debug signature change every build?**
-Two places: the [Releases](https://github.com/sysrv64/KArchiver/releases) page (tagged versions with both APKs, their byte sizes and SHA-256) and GitHub → Actions → the latest successful run on `main` → artifacts. `KArchiver-debug` exists for every run, `KArchiver-release` only for pushes to `main`. Debug APKs are signed with a throwaway keystore generated for that run, so a new debug APK cannot be installed over an older debug install: uninstall the previous build first. Release APKs are signed with a stable key and update normally.
+Two places: the [Releases](https://github.com/HmnDev-Tech/ZipArc/releases) page (tagged versions with both APKs, their byte sizes and SHA-256) and GitHub → Actions → the latest successful run on `main` → artifacts. `ZipArc-debug` exists for every run, `ZipArc-release` only for pushes to `main`. Debug APKs are signed with a throwaway keystore generated for that run, so a new debug APK cannot be installed over an older debug install: uninstall the previous build first. Release APKs are signed with a stable key and update normally.
 
 **Installation fails with "APK Signature Scheme v2: SHA-256 digest of contents did not verify" or `INSTALL_PARSE_FAILED_NO_CERTIFICATES`.**
 The APK file was modified after it was built. Debug APKs are signed with v2 only, and v2 signs the whole file, so repacking, re-compression, "optimizing", an incomplete download or a copy to a failing SD card breaks it. Compare size and SHA-256 with the release entry or the run summary, re-download the artifact, extract it with a plain extractor, keep it in internal storage and install again, or use `adb install -r app-debug.apk`.
@@ -17,6 +17,9 @@ To manage files outside the folders it owns. It is optional: if you deny it, the
 
 **What are Shizuku and root used for?**
 Restricted paths a normal app cannot touch, for example `/Android/data` and system directories. Both are optional (Settings → Elevation → Off / Shizuku / Root). Shizuku needs the Shizuku app installed and running; root needs a working `su`.
+
+**Can I open folders above `/storage/emulated/0`, including `/`?**
+Yes. The file browser lets you navigate up past the shared-storage root all the way to the device root `/`, and breadcrumbs start at `/`. Many paths there are unreadable without elevation: use Shizuku or root, otherwise the folder may appear empty or denied. This is an Android permission limit, not a bug.
 
 **How do I enable RAR?**
 Settings → File manager → **RAR support**. It is read-only at first. To unlock creating RAR archives, press and hold the same row for 5 seconds until a haptic tick confirms; RAR packing is a deliberate speed bump because of RARLAB's licensing terms.

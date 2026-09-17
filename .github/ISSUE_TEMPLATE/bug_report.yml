@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a reproducible bug in KArchiver.
+description: Report a reproducible bug in ZipArc.
 title: "bug: "
 labels: ["bug"]
 body:
@@ -102,7 +102,7 @@ body:
     id: logs
     attributes:
       label: Logs
-      description: Relevant logcat lines (`adb logcat -s KArchiver:D` or the crash stack trace). Do not paste whole logs.
+      description: Relevant logcat lines (`adb logcat -s ZipArc:D` or the crash stack trace). Do not paste whole logs.
       render: shell
     validations:
       required: false

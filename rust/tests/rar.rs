@@ -1,9 +1,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use karchiver_rs::backend;
-use karchiver_rs::format::Format;
-use karchiver_rs::io_util::Limits;
+use ziparc_rs::backend;
+use ziparc_rs::format::Format;
+use ziparc_rs::io_util::Limits;
 use tempfile::tempdir;
 
 fn data(name: &str) -> PathBuf {
@@ -86,7 +86,7 @@ fn rar_extract_with_password() {
         &out,
         Format::Rar,
         &Limits::default(),
-        "karchiver",
+        "ziparc",
     )
     .unwrap();
     assert_eq!(
@@ -145,12 +145,12 @@ fn rar_pack_with_password_roundtrip() {
     let src = dir.path().join("secret.txt");
     fs::write(&src, b"packed secret").unwrap();
     let dest = dir.path().join("locked.rar");
-    backend::compress_with_password(&[src], &dest, Format::Rar, &Limits::default(), "karchiver")
+    backend::compress_with_password(&[src], &dest, Format::Rar, &Limits::default(), "ziparc")
         .unwrap();
     let listing = backend::list_detailed(&dest, Format::Rar).unwrap();
     assert!(listing.encrypted);
     let out = dir.path().join("out");
-    backend::extract_with_password(&dest, &out, Format::Rar, &Limits::default(), "karchiver")
+    backend::extract_with_password(&dest, &out, Format::Rar, &Limits::default(), "ziparc")
         .unwrap();
     assert_eq!(
         fs::read_to_string(out.join("secret.txt")).unwrap(),
@@ -205,7 +205,7 @@ fn rar_test_with_password_ok_and_wrong() {
         &data("rar_secret.rar"),
         Format::Rar,
         &Limits::default(),
-        "karchiver",
+        "ziparc",
     )
     .unwrap();
     assert!(report.ok(), "failures: {:?}", report.failures);
@@ -227,7 +227,7 @@ fn rar_test_with_password_ok_and_wrong() {
 #[test]
 fn rar_list_detailed_with_password() {
     let listing =
-        backend::list_detailed_with_password(&data("rar_secret.rar"), Format::Rar, "karchiver")
+        backend::list_detailed_with_password(&data("rar_secret.rar"), Format::Rar, "ziparc")
             .unwrap();
     assert!(listing.encrypted);
     assert_eq!(listing.entries.len(), 1);

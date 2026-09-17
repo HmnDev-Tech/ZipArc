@@ -2,14 +2,14 @@ use std::fs;
 use std::io::Write;
 use std::path::Path;
 
-use karchiver_rs::backend;
-use karchiver_rs::format::Format;
-use karchiver_rs::io_util::Limits;
+use ziparc_rs::backend;
+use ziparc_rs::format::Format;
+use ziparc_rs::io_util::Limits;
 use tempfile::tempdir;
 
 fn make_tree(root: &Path) {
     fs::create_dir_all(root.join("sub")).unwrap();
-    fs::write(root.join("hello.txt"), b"hello karchiver").unwrap();
+    fs::write(root.join("hello.txt"), b"hello ziparc").unwrap();
     fs::write(root.join("sub/nested.bin"), [0u8, 1, 2, 3, 4, 255]).unwrap();
     fs::write(root.join("sub/empty.txt"), b"").unwrap();
 }
@@ -36,7 +36,7 @@ fn assert_roundtrip(format: Format, archive_name: &str) {
     let extracted = out.join("src");
     assert_eq!(
         fs::read_to_string(extracted.join("hello.txt")).unwrap(),
-        "hello karchiver"
+        "hello ziparc"
     );
     assert_eq!(
         fs::read(extracted.join("sub/nested.bin")).unwrap(),
@@ -118,12 +118,12 @@ fn extraction_rejects_parent_traversal() {
 fn extraction_rejects_absolute_path() {
     let dir = tempdir().unwrap();
     let archive = dir.path().join("abs.zip");
-    write_malicious_zip(&archive, "/tmp/karchiver-abs-evil.txt");
+    write_malicious_zip(&archive, "/tmp/ziparc-abs-evil.txt");
 
     let out = dir.path().join("out");
     let result = backend::extract(&archive, &out, Format::Zip, &Limits::default());
     assert!(result.is_err(), "absolute entry should be rejected");
-    assert!(!Path::new("/tmp/karchiver-abs-evil.txt").exists());
+    assert!(!Path::new("/tmp/ziparc-abs-evil.txt").exists());
 }
 
 #[test]

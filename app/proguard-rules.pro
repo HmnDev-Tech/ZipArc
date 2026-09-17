@@ -1,2 +1,2 @@
--keep class com.kerneldroid.karchiver.** { *; }
--dontwarn com.kerneldroid.karchiver.rust.**
+-keep class com.hmndev.ziparc.** { *; }
+-dontwarn com.hmndev.ziparc.rust.**

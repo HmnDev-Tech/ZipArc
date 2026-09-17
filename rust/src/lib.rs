@@ -1,4 +1,4 @@
-//! KArchiver Rust core.
+//! ZipArc Rust core.
 //!
 //! This crate is a thin, panic-safe layer over a set of archive backends. All
 //! business logic lives in the modules below; [`lib.rs`](self) only wires them

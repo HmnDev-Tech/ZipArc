@@ -15,18 +15,18 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
     <application
-        android:name=".KArchiverApp"
+        android:name=".ZipArcApp"
         android:allowBackup="true"
         android:enableOnBackInvokedCallback="true"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
         android:supportsRtl="true"
-        android:theme="@style/Theme.KArchiver">
+        android:theme="@style/Theme.ZipArc">
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:theme="@style/Theme.KArchiver"
+            android:theme="@style/Theme.ZipArc"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

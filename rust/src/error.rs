@@ -10,8 +10,8 @@ use std::io;
 /// Marker embedded into synthetic [`io::Error`] messages so that a streaming
 /// budget violation produced deep inside `std::io::copy` can be recognised
 /// again when it surfaces as an [`io::Error`].
-pub const LIMIT_MARKER: &str = "KARCHIVER_LIMIT";
-pub const CANCEL_MARKER: &str = "KARCHIVER_CANCELLED";
+pub const LIMIT_MARKER: &str = "ZIPARC_LIMIT";
+pub const CANCEL_MARKER: &str = "ZIPARC_CANCELLED";
 pub const PASSWORD_MARKER: &str = "password required";
 
 /// Every failure mode the engine can produce.

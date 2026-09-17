@@ -12,5 +12,5 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = "KArchiver"
+rootProject.name = "ZipArc"
 include(":app")

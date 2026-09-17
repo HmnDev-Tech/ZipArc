@@ -294,7 +294,7 @@ fn extract_impl(
     let result = reader.for_each_entries(|entry, data| {
         if is_cancelled() {
             fatal = Some(ArchiveError::Cancelled);
-            return Err(sevenz_rust2::Error::Unsupported("karchiver fatal".into()));
+            return Err(sevenz_rust2::Error::Unsupported("ziparc fatal".into()));
         }
         if fatal.is_some() {
             return Ok(true);
@@ -305,7 +305,7 @@ fn extract_impl(
             let _ = io::copy(&mut cancellable, &mut io::sink());
             if is_cancelled() {
                 fatal = Some(ArchiveError::Cancelled);
-                return Err(sevenz_rust2::Error::Unsupported("karchiver fatal".into()));
+                return Err(sevenz_rust2::Error::Unsupported("ziparc fatal".into()));
             }
             return Ok(true);
         }
@@ -313,7 +313,7 @@ fn extract_impl(
             Ok(()) => Ok(true),
             Err(e) if e.is_fatal() => {
                 fatal = Some(e);
-                Err(sevenz_rust2::Error::Unsupported("karchiver fatal".into()))
+                Err(sevenz_rust2::Error::Unsupported("ziparc fatal".into()))
             }
             Err(e) => {
                 warnings.push(format!("{name}: {e}"));
@@ -321,7 +321,7 @@ fn extract_impl(
                 let _ = io::copy(&mut cancellable, &mut io::sink());
                 if is_cancelled() {
                     fatal = Some(ArchiveError::Cancelled);
-                    return Err(sevenz_rust2::Error::Unsupported("karchiver fatal".into()));
+                    return Err(sevenz_rust2::Error::Unsupported("ziparc fatal".into()));
                 }
                 Ok(true)
             }
@@ -400,7 +400,7 @@ pub fn search_content(
     let result = reader.for_each_entries(|entry, data| {
         if is_cancelled() {
             fatal = Some(ArchiveError::Cancelled);
-            return Err(sevenz_rust2::Error::Unsupported("karchiver fatal".into()));
+            return Err(sevenz_rust2::Error::Unsupported("ziparc fatal".into()));
         }
         if fatal.is_some() || entry.is_directory() {
             return Ok(true);
@@ -413,14 +413,14 @@ pub fn search_content(
         while !scanner.is_done() {
             if is_cancelled() {
                 fatal = Some(ArchiveError::Cancelled);
-                return Err(sevenz_rust2::Error::Unsupported("karchiver fatal".into()));
+                return Err(sevenz_rust2::Error::Unsupported("ziparc fatal".into()));
             }
             match data.read(&mut buf) {
                 Ok(0) => break,
                 Ok(n) => scanner.feed(&buf[..n]),
                 Err(e) => {
                     fatal = Some(ArchiveError::Io(e));
-                    return Err(sevenz_rust2::Error::Unsupported("karchiver fatal".into()));
+                    return Err(sevenz_rust2::Error::Unsupported("ziparc fatal".into()));
                 }
             }
         }
@@ -468,14 +468,14 @@ fn test_impl(archive: &Path, limits: &Limits, password: Option<&str>) -> Result<
     let result = reader.for_each_entries(|entry, data| {
         if is_cancelled() {
             fatal = Some(ArchiveError::Cancelled);
-            return Err(sevenz_rust2::Error::Unsupported("karchiver fatal".into()));
+            return Err(sevenz_rust2::Error::Unsupported("ziparc fatal".into()));
         }
         if fatal.is_some() {
             return Ok(true);
         }
         if check_cancelled().is_err() {
             fatal = Some(ArchiveError::Cancelled);
-            return Err(sevenz_rust2::Error::Unsupported("karchiver fatal".into()));
+            return Err(sevenz_rust2::Error::Unsupported("ziparc fatal".into()));
         }
         let name = entry.name().to_string();
         count += 1;
@@ -484,7 +484,7 @@ fn test_impl(archive: &Path, limits: &Limits, password: Option<&str>) -> Result<
                 Ok(()) => {}
                 Err(e) if e.is_fatal() => {
                     fatal = Some(e);
-                    return Err(sevenz_rust2::Error::Unsupported("karchiver fatal".into()));
+                    return Err(sevenz_rust2::Error::Unsupported("ziparc fatal".into()));
                 }
                 Err(e) => {
                     failures.push(TestFailure {
@@ -509,7 +509,7 @@ fn test_impl(archive: &Path, limits: &Limits, password: Option<&str>) -> Result<
             Ok(()) => {}
             Err(e) if e.is_fatal() => {
                 fatal = Some(e);
-                return Err(sevenz_rust2::Error::Unsupported("karchiver fatal".into()));
+                return Err(sevenz_rust2::Error::Unsupported("ziparc fatal".into()));
             }
             Err(e) => {
                 failures.push(TestFailure {
@@ -533,7 +533,7 @@ fn test_impl(archive: &Path, limits: &Limits, password: Option<&str>) -> Result<
                     }
                     Err(e) if e.is_fatal() => {
                         fatal = Some(e);
-                        return Err(sevenz_rust2::Error::Unsupported("karchiver fatal".into()));
+                        return Err(sevenz_rust2::Error::Unsupported("ziparc fatal".into()));
                     }
                     Err(e) => {
                         failures.push(TestFailure {
@@ -546,7 +546,7 @@ fn test_impl(archive: &Path, limits: &Limits, password: Option<&str>) -> Result<
             }
             Err(e) if e.is_fatal() => {
                 fatal = Some(e);
-                Err(sevenz_rust2::Error::Unsupported("karchiver fatal".into()))
+                Err(sevenz_rust2::Error::Unsupported("ziparc fatal".into()))
             }
             Err(e) => {
                 failures.push(TestFailure {
@@ -557,7 +557,7 @@ fn test_impl(archive: &Path, limits: &Limits, password: Option<&str>) -> Result<
                 let _ = io::copy(&mut cancellable, &mut io::sink());
                 if is_cancelled() {
                     fatal = Some(ArchiveError::Cancelled);
-                    return Err(sevenz_rust2::Error::Unsupported("karchiver fatal".into()));
+                    return Err(sevenz_rust2::Error::Unsupported("ziparc fatal".into()));
                 }
                 Ok(true)
             }

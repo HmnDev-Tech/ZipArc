@@ -523,7 +523,7 @@ impl AtomicFile {
             .map(|d| d.as_nanos())
             .unwrap_or(0);
         let tmp = parent.join(format!(
-            ".{}.karchiver-tmp.{}.{}.{}",
+            ".{}.ziparc-tmp.{}.{}.{}",
             name,
             std::process::id(),
             nanos,
@@ -586,7 +586,7 @@ pub fn copy_limited<R: Read, W: io::Write>(
 
 /// Print a non-fatal warning (visible in logcat via stderr).
 pub fn log_warn(msg: impl std::fmt::Display) {
-    eprintln!("[karchiver] {msg}");
+    eprintln!("[ziparc] {msg}");
 }
 
 pub fn wipe_bytes(buf: &mut [u8]) {
@@ -605,7 +605,7 @@ mod tests {
     static PROGRESS_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     fn root() -> PathBuf {
-        PathBuf::from("/tmp/karchiver-dest")
+        PathBuf::from("/tmp/ziparc-dest")
     }
 
     #[test]
