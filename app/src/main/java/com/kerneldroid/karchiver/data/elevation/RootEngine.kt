@@ -9,6 +9,8 @@ import java.io.IOException
 import java.io.InputStream
 import java.io.InputStreamReader
 import java.io.OutputStreamWriter
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.LinkedBlockingQueue
@@ -680,6 +682,41 @@ object RootEngine : ElevatedFS {
                 process.destroyForcibly()
             }
         } catch (_: Exception) {
+        }
+    }
+
+    override suspend fun rename(src: File, dst: File): Boolean {
+        return try {
+            if (isFreshNegative()) return false
+            val result = execOneShot("mv -- ${shellQuote(src.absolutePath)} ${shellQuote(dst.absolutePath)}")
+            if (result.code != 0) {
+                invalidate()
+                false
+            } else {
+                noteSuccess()
+                true
+            }
+        } catch (_: Exception) {
+            invalidate()
+            false
+        }
+    }
+
+    override suspend fun setLastModified(path: File, millis: Long): Boolean {
+        return try {
+            if (isFreshNegative()) return false
+            val stamp = SimpleDateFormat("yyyyMMddHHmm.ss", Locale.US).format(Date(millis))
+            val result = execOneShot("touch -m -t $stamp -- ${shellQuote(path.absolutePath)}")
+            if (result.code != 0) {
+                invalidate()
+                false
+            } else {
+                noteSuccess()
+                true
+            }
+        } catch (_: Exception) {
+            invalidate()
+            false
         }
     }
 

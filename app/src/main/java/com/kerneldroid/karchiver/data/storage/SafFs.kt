@@ -293,6 +293,34 @@ object SafFs {
             }
         }
 
+    suspend fun rename(context: Context, treeUri: Uri, rel: String, newName: String): Boolean =
+        withContext(Dispatchers.IO) {
+            try {
+                val trimmed = newName.trim()
+                if (trimmed.isEmpty() || trimmed.contains('/')) return@withContext false
+                if (rel.isEmpty()) return@withContext false
+                val docUri = resolveUri(context, treeUri, rel) ?: return@withContext false
+                val slash = rel.lastIndexOf('/')
+                val parentRel = if (slash < 0) "" else rel.substring(0, slash)
+                val parentUri = resolveUri(context, treeUri, parentRel) ?: return@withContext false
+                val parentDocId = try {
+                    DocumentsContract.getDocumentId(parentUri)
+                } catch (_: Exception) {
+                    return@withContext false
+                }
+                val currentDocId = try {
+                    DocumentsContract.getDocumentId(docUri)
+                } catch (_: Exception) {
+                    return@withContext false
+                }
+                val taken = lookupChild(context, treeUri, parentDocId, trimmed)
+                if (taken != null && taken.docId != currentDocId) return@withContext false
+                DocumentsContract.renameDocument(context.contentResolver, docUri, trimmed) != null
+            } catch (_: Exception) {
+                false
+            }
+        }
+
     suspend fun copyIn(
         context: Context,
         treeUri: Uri,

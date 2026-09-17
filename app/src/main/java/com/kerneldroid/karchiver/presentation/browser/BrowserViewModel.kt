@@ -817,6 +817,22 @@ class BrowserViewModel(
         }
     }
 
+    fun renameFile(file: File, newName: String, onDone: (Result<File>) -> Unit = {}) {
+        viewModelScope.launch {
+            val r = repo.renameFile(file, newName, elevationEngine())
+            refresh()
+            onDone(r)
+        }
+    }
+
+    fun setFileModified(file: File, millis: Long, onDone: (Result<Unit>) -> Unit = {}) {
+        viewModelScope.launch {
+            val r = repo.setLastModified(file, millis, elevationEngine())
+            refresh()
+            onDone(r)
+        }
+    }
+
     fun selectedFiles(): List<File> {
         val sel = _state.value.selected
         return _state.value.items.filter { sel.contains(it.file.absolutePath) }.map { it.file }

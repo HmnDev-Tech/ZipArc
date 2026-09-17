@@ -207,6 +207,30 @@ class FileSystemRepository {
         }
     }
 
+    suspend fun renameFile(file: File, newName: String, elevated: ElevatedFS? = null): Result<File> = withContext(Dispatchers.IO) {
+        runCatching {
+            val trimmed = newName.trim()
+            require(trimmed.isNotEmpty()) { "Name is empty" }
+            require(!trimmed.contains('/')) { "Name cannot contain a slash" }
+            val parent = file.parentFile ?: error("Cannot rename root")
+            val target = File(parent, trimmed)
+            if (target.absolutePath == file.absolutePath) return@runCatching file
+            if (target.exists()) error("Already exists")
+            if (file.renameTo(target)) return@runCatching target
+            if (elevated != null && elevated.rename(file, target)) return@runCatching target
+            if (trySafRename(file, trimmed)) return@runCatching target
+            error("Rename failed")
+        }
+    }
+
+    suspend fun setLastModified(file: File, millis: Long, elevated: ElevatedFS? = null): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            if (file.setLastModified(millis)) return@runCatching
+            if (elevated != null && elevated.setLastModified(file, millis)) return@runCatching
+            error("Cannot change date here")
+        }
+    }
+
     private fun applyModeBits(path: File, mode: Int) {
         val ownerOnly = false
         if (!path.setReadable(mode and 0x124 != 0, ownerOnly)) error("Could not set mode")
@@ -368,6 +392,16 @@ class FileSystemRepository {
         val bridge = safBridge ?: return false
         return try {
             bridge.deleteTargets(files, safVolumes)
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private suspend fun trySafRename(file: File, newName: String): Boolean {
+        if (!safAutoFallback) return false
+        val bridge = safBridge ?: return false
+        return try {
+            bridge.rename(file, newName, safVolumes)
         } catch (_: Exception) {
             false
         }

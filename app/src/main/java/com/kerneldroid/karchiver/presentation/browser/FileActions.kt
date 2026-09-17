@@ -20,12 +20,15 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DropdownMenuGroup
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.DropdownMenuPopup
@@ -39,6 +42,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -51,6 +55,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import androidx.core.graphics.drawable.toBitmap
@@ -59,6 +64,9 @@ import com.kerneldroid.karchiver.data.FileSystemRepository
 import com.kerneldroid.karchiver.data.formatBytes
 import java.io.File
 import java.text.SimpleDateFormat
+import java.time.Instant
+import java.time.ZoneId
+import java.time.ZoneOffset
 import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
@@ -128,12 +136,16 @@ fun PropertiesSheet(
     repo: FileSystemRepository,
     elevated: Boolean,
     onChmod: (Int, (Result<Unit>) -> Unit) -> Unit,
+    onRename: (String, (Result<File>) -> Unit) -> Unit,
+    onSetModified: (Long, (Result<Unit>) -> Unit) -> Unit,
     onDismiss: () -> Unit
 ) {
     var props by remember(file.absolutePath) { mutableStateOf<FileProperties?>(null) }
     var editMode by remember(file.absolutePath) { mutableStateOf(false) }
     var octalText by remember(file.absolutePath) { mutableStateOf("") }
     var reloadTick by remember(file.absolutePath) { mutableStateOf(0) }
+    var showRename by remember(file.absolutePath) { mutableStateOf(false) }
+    var showDatePicker by remember(file.absolutePath) { mutableStateOf(false) }
     LaunchedEffect(file.absolutePath, reloadTick) {
         props = withContext(Dispatchers.IO) { repo.loadProperties(file, elevated) }
     }
@@ -151,10 +163,49 @@ fun PropertiesSheet(
                 Text("Loading", style = MaterialTheme.typography.bodyMedium)
                 return@Column
             }
-            PropRow("Name", p.name)
+            val canEdit = p.canModify
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Name", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        p.name,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                if (canEdit) {
+                    IconButton(onClick = { showRename = true }) {
+                        Icon(Icons.Filled.Edit, "Rename")
+                    }
+                }
+            }
             PropRow("Path", p.path)
             PropRow("Size", p.sizeBytes?.let { formatBytes(it) } ?: "Unknown")
-            PropRow("Modified", SimpleDateFormat("d MMM yyyy, HH:mm", Locale.US).format(Date(p.modified)))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.then(
+                    if (canEdit) Modifier.clickable { showDatePicker = true } else Modifier
+                )
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Modified", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        SimpleDateFormat("d MMM yyyy, HH:mm", Locale.US).format(Date(p.modified)),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                if (canEdit) {
+                    Icon(
+                        Icons.Filled.CalendarMonth,
+                        null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
             PropRow("Type", p.mime)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
@@ -213,6 +264,58 @@ fun PropertiesSheet(
             }
         }
     }
+    if (showRename) {
+        var draft by remember(props?.path) { mutableStateOf(props?.name.orEmpty()) }
+        AlertDialog(
+            onDismissRequest = { showRename = false },
+            icon = { Icon(Icons.Filled.Edit, null) },
+            title = { Text("Rename") },
+            text = {
+                OutlinedTextField(
+                    value = draft,
+                    onValueChange = { draft = it },
+                    label = { Text("Name") },
+                    singleLine = true
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = draft.isNotBlank() && draft.trim() != props?.name,
+                    onClick = {
+                        val name = draft.trim()
+                        showRename = false
+                        onRename(name) { reloadTick++ }
+                    }
+                ) { Text("Rename") }
+            },
+            dismissButton = { TextButton(onClick = { showRename = false }) { Text("Cancel") } }
+        )
+    }
+    val currentModified = props?.modified
+    if (showDatePicker && currentModified != null) {
+        val dateState = rememberDatePickerState(initialSelectedDateMillis = currentModified)
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    val selected = dateState.selectedDateMillis
+                    showDatePicker = false
+                    if (selected != null) {
+                        onSetModified(mergeDateKeepingTime(selected, currentModified)) { reloadTick++ }
+                    }
+                }) { Text("Set date") }
+            },
+            dismissButton = { TextButton(onClick = { showDatePicker = false }) { Text("Cancel") } }
+        ) {
+            DatePicker(state = dateState)
+        }
+    }
+}
+
+private fun mergeDateKeepingTime(utcDateMillis: Long, previousMillis: Long): Long {
+    val date = Instant.ofEpochMilli(utcDateMillis).atZone(ZoneOffset.UTC).toLocalDate()
+    val time = Instant.ofEpochMilli(previousMillis).atZone(ZoneId.systemDefault()).toLocalTime()
+    return date.atTime(time).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
 }
 
 @Composable

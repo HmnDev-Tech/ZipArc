@@ -524,6 +524,28 @@ fun BrowserScreen(
                     onDone(r)
                 }
             },
+            onRename = { newName, onDone ->
+                vm.renameFile(file, newName) { r ->
+                    scope.launch {
+                        snackbar.showSnackbar(
+                            if (r.isSuccess) "Renamed to ${r.getOrNull()?.name ?: newName}"
+                            else vm.archiveOpMessage(r.exceptionOrNull(), "Renamed", "Could not rename")
+                        )
+                    }
+                    if (r.isSuccess) propsFile = null
+                    onDone(r)
+                }
+            },
+            onSetModified = { millis, onDone ->
+                vm.setFileModified(file, millis) { r ->
+                    scope.launch {
+                        snackbar.showSnackbar(
+                            if (r.isSuccess) "Date updated" else "Could not change date"
+                        )
+                    }
+                    onDone(r)
+                }
+            },
             onDismiss = { propsFile = null }
         )
     }

@@ -27,6 +27,8 @@ interface ElevatedFS {
     suspend fun deleteRecursively(targets: List<File>): Boolean
     suspend fun mkdirs(dir: File): Boolean
     suspend fun chmod(path: File, mode: Int): Boolean
+    suspend fun rename(src: File, dst: File): Boolean = false
+    suspend fun setLastModified(path: File, millis: Long): Boolean = false
     suspend fun openReadFd(path: String): ParcelFileDescriptor? = null
     suspend fun openWriteFd(path: String): ParcelFileDescriptor? = null
     suspend fun copyInto(src: File, dst: File): Boolean = false

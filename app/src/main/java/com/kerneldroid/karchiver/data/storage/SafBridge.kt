@@ -97,6 +97,19 @@ class SafBridge(private val context: Context, private val grants: SafGrants) {
             }
         }
 
+    suspend fun rename(file: File, newName: String, volumes: List<AppVolume>): Boolean =
+        withContext(Dispatchers.IO) {
+            try {
+                val trimmed = newName.trim()
+                if (trimmed.isEmpty() || trimmed.contains('/')) return@withContext false
+                val binding = bindingFor(file, volumes) ?: return@withContext false
+                if (binding.third.isEmpty()) return@withContext false
+                SafFs.rename(appContext, binding.second, binding.third, trimmed)
+            } catch (_: Exception) {
+                false
+            }
+        }
+
     suspend fun copyInTree(
         items: List<CopyItem>,
         destDir: File,
