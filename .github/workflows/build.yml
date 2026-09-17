@@ -91,3 +91,19 @@ jobs:
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           compression-level: 0
+
+      - name: APK checksum
+        run: |
+          APK=$(ls app/build/outputs/apk/debug/*.apk | head -1)
+          SIZE=$(stat -c%s "$APK")
+          HASH=$(sha256sum "$APK" | cut -d' ' -f1)
+          echo "file: $(basename "$APK")"
+          echo "size: $SIZE"
+          echo "sha256: $HASH"
+          {
+            echo "### KArchiver-debug"
+            echo ""
+            echo "| file | bytes | sha256 |"
+            echo "| --- | --- | --- |"
+            echo "| $(basename "$APK") | $SIZE | \`$HASH\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
