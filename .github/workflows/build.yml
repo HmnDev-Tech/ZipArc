@@ -102,7 +102,7 @@ jobs:
           ./gradlew :app:assembleDebug --no-daemon -x lint --stacktrace
 
       - name: Build release APK
-        if: github.event_name != 'pull_request'
+        if: false
         env:
           KEYSTORE_B64: ${{ secrets.ZIPARC_KEYSTORE_BASE64 }}
           STORE_PASSWORD: ${{ secrets.ZIPARC_STORE_PASSWORD }}
