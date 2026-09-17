@@ -3,6 +3,7 @@ package com.kerneldroid.karchiver.data
 import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
@@ -30,7 +31,11 @@ data class AppSettings(
     val elevationMode: String = "off",
     val safAutoFallback: Boolean = true,
     val seeDevicesInUi: Boolean = false,
-    val historyEnabled: Boolean = true
+    val historyEnabled: Boolean = true,
+    val searchInContent: Boolean = false,
+    val searchInArchives: Boolean = true,
+    val searchCaseSensitive: Boolean = false,
+    val searchMaxScanMb: Int = 5
 )
 
 class SettingsRepository(private val appContext: Context) {
@@ -57,6 +62,10 @@ class SettingsRepository(private val appContext: Context) {
         val SAF_AUTO_FALLBACK = booleanPreferencesKey("saf_auto_fallback")
         val SEE_DEVICES_IN_UI = booleanPreferencesKey("see_devices_in_ui")
         val HISTORY_ENABLED = booleanPreferencesKey("history_enabled")
+        val SEARCH_IN_CONTENT = booleanPreferencesKey("search_in_content")
+        val SEARCH_IN_ARCHIVES = booleanPreferencesKey("search_in_archives")
+        val SEARCH_CASE_SENSITIVE = booleanPreferencesKey("search_case_sensitive")
+        val SEARCH_MAX_SCAN_MB = intPreferencesKey("search_max_scan_mb")
         val FAVORITES = stringSetPreferencesKey("favorite_paths")
     }
 
@@ -116,7 +125,11 @@ class SettingsRepository(private val appContext: Context) {
             elevationMode = p[Keys.ELEVATION_MODE] ?: "off",
             safAutoFallback = p[Keys.SAF_AUTO_FALLBACK] ?: true,
             seeDevicesInUi = p[Keys.SEE_DEVICES_IN_UI] ?: false,
-            historyEnabled = p[Keys.HISTORY_ENABLED] ?: true
+            historyEnabled = p[Keys.HISTORY_ENABLED] ?: true,
+            searchInContent = p[Keys.SEARCH_IN_CONTENT] ?: false,
+            searchInArchives = p[Keys.SEARCH_IN_ARCHIVES] ?: true,
+            searchCaseSensitive = p[Keys.SEARCH_CASE_SENSITIVE] ?: false,
+            searchMaxScanMb = p[Keys.SEARCH_MAX_SCAN_MB] ?: 5
         )
     }
 
@@ -178,4 +191,16 @@ class SettingsRepository(private val appContext: Context) {
 
     suspend fun setHistoryEnabled(value: Boolean) =
         appContext.dataStore.edit { it[Keys.HISTORY_ENABLED] = value }
+
+    suspend fun setSearchInContent(value: Boolean) =
+        appContext.dataStore.edit { it[Keys.SEARCH_IN_CONTENT] = value }
+
+    suspend fun setSearchInArchives(value: Boolean) =
+        appContext.dataStore.edit { it[Keys.SEARCH_IN_ARCHIVES] = value }
+
+    suspend fun setSearchCaseSensitive(value: Boolean) =
+        appContext.dataStore.edit { it[Keys.SEARCH_CASE_SENSITIVE] = value }
+
+    suspend fun setSearchMaxScanMb(value: Int) =
+        appContext.dataStore.edit { it[Keys.SEARCH_MAX_SCAN_MB] = value }
 }

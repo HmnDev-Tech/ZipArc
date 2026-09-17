@@ -15,7 +15,8 @@ use lzma_rust2::{XzOptions, XzReader, XzWriter};
 use zstd::stream::read::Decoder as ZstdDecoder;
 use zstd::stream::write::Encoder as ZstdEncoder;
 
-use crate::backend::{PreviewEntry, PreviewListing, TestFailure, TestReport};
+use crate::backend::{ContentMatch, PreviewEntry, PreviewListing, TestFailure, TestReport};
+use crate::content_search::Scanner;
 use crate::error::{ArchiveError, Result, classify_io};
 use crate::format::Format;
 use crate::io_util::{
@@ -185,6 +186,37 @@ pub fn list_detailed(archive: &Path, _format: Format) -> Result<PreviewListing> 
         is_dir: false,
         encrypted: false,
     }]))
+}
+
+pub fn search_content(
+    archive: &Path,
+    format: Format,
+    needle: &str,
+    case_sensitive: bool,
+    max_bytes: u64,
+) -> Result<Vec<ContentMatch>> {
+    let name = output_name(archive)?;
+    let mut reader = open_decoder(archive, format)?;
+    let Some(mut scanner) = Scanner::new(needle, case_sensitive, max_bytes) else {
+        return Ok(Vec::new());
+    };
+    let mut buf = vec![0u8; 64 * 1024];
+    while !scanner.is_done() {
+        check_cancelled()?;
+        let n = reader.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        scanner.feed(&buf[..n]);
+    }
+    match scanner.finish() {
+        Some(m) => Ok(vec![ContentMatch {
+            name,
+            line: m.line,
+            snippet: m.snippet,
+        }]),
+        None => Ok(Vec::new()),
+    }
 }
 
 pub fn test(archive: &Path, format: Format, limits: &Limits) -> Result<TestReport> {

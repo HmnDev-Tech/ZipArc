@@ -15,7 +15,10 @@ use rars::{
     WriteProgress, WriteProgressEvent, WriterResources,
 };
 
-use crate::backend::{PreviewEntry, PreviewListing, TestFailure, TestReport, collect_sources};
+use crate::backend::{
+    ContentMatch, PreviewEntry, PreviewListing, TestFailure, TestReport, collect_sources,
+};
+use crate::content_search::Scanner;
 use crate::error::{ArchiveError, CANCEL_MARKER, LIMIT_MARKER, Result, classify_io};
 use crate::io_util::{
     AtomicFile, LimitState, Limits, check_cancelled, create_dir_all_checked, create_output_file,
@@ -544,6 +547,76 @@ fn list_detailed_impl(archive: &Path, password: Option<&[u8]>) -> Result<Preview
         });
     }
     Ok(PreviewListing::new(out))
+}
+
+pub fn search_content(
+    archive: &Path,
+    needle: &str,
+    case_sensitive: bool,
+    password: Option<&str>,
+    max_bytes: u64,
+) -> Result<Vec<ContentMatch>> {
+    let limits = Limits::default();
+    let clean = password.filter(|p| !p.is_empty()).map(|p| p.as_bytes());
+    let have_password = clean.is_some();
+    let parsed = open_archive(archive, clean, &limits)?;
+    let out: Rc<RefCell<Vec<ContentMatch>>> = Rc::new(RefCell::new(Vec::new()));
+    let needle = needle.to_string();
+    let result = parsed.extract_to(clean, |meta| {
+        if is_cancelled() {
+            return Err(rars::Error::Cancelled);
+        }
+        if meta.is_directory || is_symlink(meta) {
+            return Ok(Box::new(io::sink()));
+        }
+        match Scanner::new(&needle, case_sensitive, max_bytes) {
+            Some(scanner) => Ok(Box::new(SearchWriter {
+                scanner,
+                name: meta.name_lossy(),
+                out: Rc::clone(&out),
+            })),
+            None => Ok(Box::new(io::sink())),
+        }
+    });
+    if is_cancelled() {
+        return Err(ArchiveError::Cancelled);
+    }
+    match result {
+        Ok(()) => Ok(out.borrow().clone()),
+        Err(e) => Err(map_err(e, have_password)),
+    }
+}
+
+struct SearchWriter {
+    scanner: Scanner,
+    name: String,
+    out: Rc<RefCell<Vec<ContentMatch>>>,
+}
+
+impl Write for SearchWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if is_cancelled() {
+            return Err(io::Error::other(CANCEL_MARKER));
+        }
+        self.scanner.feed(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+impl Drop for SearchWriter {
+    fn drop(&mut self) {
+        if let Some(m) = self.scanner.finish() {
+            self.out.borrow_mut().push(ContentMatch {
+                name: self.name.clone(),
+                line: m.line,
+                snippet: m.snippet,
+            });
+        }
+    }
 }
 
 pub fn test(archive: &Path, limits: &Limits) -> Result<TestReport> {

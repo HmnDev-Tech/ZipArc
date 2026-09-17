@@ -68,6 +68,7 @@ import com.kerneldroid.karchiver.data.storage.AppVolume
 import com.kerneldroid.karchiver.data.storage.VolumeKind
 import com.kerneldroid.karchiver.presentation.browser.BrowserScreen
 import com.kerneldroid.karchiver.presentation.browser.BrowserViewModel
+import com.kerneldroid.karchiver.presentation.browser.SearchSettings
 import com.kerneldroid.karchiver.presentation.browser.ViewMode
 import com.kerneldroid.karchiver.presentation.components.CustomNavigationDrawerItem
 import com.kerneldroid.karchiver.presentation.components.DrawerDestination
@@ -246,6 +247,14 @@ fun KArchiverRoot() {
         vm.setRarWriteEnabled(s.rarWriteEnabled)
         vm.setElevationMode(s.elevationMode)
         vm.setHistoryEnabled(s.historyEnabled)
+        vm.setSearchSettings(
+            SearchSettings(
+                searchInContent = s.searchInContent,
+                searchInArchives = s.searchInArchives,
+                caseSensitive = s.searchCaseSensitive,
+                maxScanMb = s.searchMaxScanMb
+            )
+        )
         ready = true
     }
 

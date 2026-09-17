@@ -5,6 +5,7 @@
 //! together and re-exports the public surface.
 
 pub mod backend;
+pub mod content_search;
 pub mod error;
 pub mod format;
 pub mod io_util;

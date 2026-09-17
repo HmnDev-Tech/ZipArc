@@ -124,6 +124,8 @@ private val themeOptions = listOf(
 
 private val supportsDynamic = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
 
+private val scanSizes = listOf(1, 5, 20, 100)
+
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun SettingsScreen(
@@ -468,6 +470,75 @@ fun SettingsScreen(
                             }
                         }
                     }
+                )
+            }
+            SectionHeader("Search")
+            Column(verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap)) {
+                SettingSwitch(
+                    index = 0,
+                    count = 4,
+                    title = "Search inside file contents",
+                    subtitle = "Plain queries also match text inside files, not only names.",
+                    checked = settings.searchInContent,
+                    onCheckedChange = { scope.launch { repo.setSearchInContent(it) } }
+                )
+                SettingSwitch(
+                    index = 1,
+                    count = 4,
+                    title = "Search inside archives",
+                    subtitle = "Match entry names and entry contents inside zip, 7z, tar and rar archives.",
+                    checked = settings.searchInArchives,
+                    onCheckedChange = { scope.launch { repo.setSearchInArchives(it) } }
+                )
+                SettingSwitch(
+                    index = 2,
+                    count = 4,
+                    title = "Case-sensitive content search",
+                    subtitle = "Match the exact letter case when scanning file and entry contents.",
+                    checked = settings.searchCaseSensitive,
+                    onCheckedChange = { scope.launch { repo.setSearchCaseSensitive(it) } }
+                )
+                SegmentedListItem(
+                    onClick = {},
+                    shapes = ListItemDefaults.segmentedShapes(index = 3, count = 4),
+                    colors = ListItemDefaults.segmentedColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                    ),
+                    supportingContent = {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(ButtonGroupDefaults.ConnectedSpaceBetween),
+                            modifier = Modifier.padding(top = 8.dp)
+                        ) {
+                            scanSizes.forEachIndexed { index, size ->
+                                val selected = settings.searchMaxScanMb == size
+                                ToggleButton(
+                                    checked = selected,
+                                    onCheckedChange = {
+                                        if (!selected) haptics.performHapticFeedback(HapticFeedbackType.SegmentFrequentTick)
+                                        scope.launch { repo.setSearchMaxScanMb(size) }
+                                    },
+                                    shapes = when (index) {
+                                        0 -> ButtonGroupDefaults.connectedLeadingButtonShapes()
+                                        scanSizes.lastIndex -> ButtonGroupDefaults.connectedTrailingButtonShapes()
+                                        else -> ButtonGroupDefaults.connectedMiddleButtonShapes()
+                                    },
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .semantics { role = Role.RadioButton }
+                                ) {
+                                    Text("$size MB", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                            }
+                        }
+                    }
+                ) {
+                    Text("Per-file content scan limit")
+                }
+                Text(
+                    "Use content:\"text\" to match file contents and archive:\"name\" to match entries inside archives. Plain words match names, or contents when enabled above.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 4.dp)
                 )
             }
             SectionHeader("Storage")

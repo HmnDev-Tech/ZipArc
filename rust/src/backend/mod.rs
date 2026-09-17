@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 
 use walkdir::WalkDir;
 
+pub use crate::content_search::ContentMatch;
 use crate::error::{ArchiveError, Result};
 use crate::format::Format;
 use crate::io_util::{Limits, check_cancelled, log_warn, progress_reset, sanitize_entry_name};
@@ -223,6 +224,37 @@ pub fn list_detailed(archive: &Path, format: Format) -> Result<PreviewListing> {
         Format::Rar => rar::list_detailed(archive),
         other => Err(ArchiveError::Unsupported(format!(
             "listing of {} is not supported",
+            other.label()
+        ))),
+    }
+}
+
+pub fn search_content(
+    archive: &Path,
+    format: Format,
+    needle: &str,
+    case_sensitive: bool,
+    password: Option<&str>,
+    max_bytes: u64,
+) -> Result<Vec<ContentMatch>> {
+    match format {
+        Format::Zip => zip::search_content(
+            archive,
+            needle,
+            case_sensitive,
+            password.map(str::as_bytes),
+            max_bytes,
+        ),
+        Format::SevenZ => {
+            sevenz::search_content(archive, needle, case_sensitive, password, max_bytes)
+        }
+        f if f.is_tar() => tar::search_content(archive, f, needle, case_sensitive, max_bytes),
+        f if f.is_single_stream() => {
+            single::search_content(archive, f, needle, case_sensitive, max_bytes)
+        }
+        Format::Rar => rar::search_content(archive, needle, case_sensitive, password, max_bytes),
+        other => Err(ArchiveError::Unsupported(format!(
+            "content search of {} is not supported",
             other.label()
         ))),
     }

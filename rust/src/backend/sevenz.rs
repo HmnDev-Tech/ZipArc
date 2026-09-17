@@ -8,7 +8,8 @@ use sevenz_rust2::encoder_options::{AesEncoderOptions, Lzma2Options};
 use sevenz_rust2::{ArchiveEntry, ArchiveReader, ArchiveWriter, Password, SourceReader};
 
 use crate::backend::collect_sources;
-use crate::backend::{PreviewEntry, PreviewListing, TestFailure, TestReport};
+use crate::backend::{ContentMatch, PreviewEntry, PreviewListing, TestFailure, TestReport};
+use crate::content_search::Scanner;
 use crate::error::{ArchiveError, CANCEL_MARKER, LIMIT_MARKER, Result, classify_io};
 use crate::io_util::{
     AtomicFile, CancelReader, LimitState, LimitedReader, Limits, check_cancelled,
@@ -378,6 +379,65 @@ fn list_detailed_impl(archive: &Path, password: Option<&str>) -> Result<PreviewL
         });
     }
     Ok(PreviewListing::new(out))
+}
+
+pub fn search_content(
+    archive: &Path,
+    needle: &str,
+    case_sensitive: bool,
+    password: Option<&str>,
+    max_bytes: u64,
+) -> Result<Vec<ContentMatch>> {
+    let (pw, have_password) = match password {
+        Some(p) => password_of(p),
+        None => (Password::empty(), false),
+    };
+    let mut reader =
+        ArchiveReader::open(archive, pw).map_err(|e| map_open_err_pw(e, have_password))?;
+    let mut out: Vec<ContentMatch> = Vec::new();
+    let mut fatal: Option<ArchiveError> = None;
+    let needle = needle.to_string();
+    let result = reader.for_each_entries(|entry, data| {
+        if is_cancelled() {
+            fatal = Some(ArchiveError::Cancelled);
+            return Err(sevenz_rust2::Error::Unsupported("karchiver fatal".into()));
+        }
+        if fatal.is_some() || entry.is_directory() {
+            return Ok(true);
+        }
+        let name = entry.name().to_string();
+        let Some(mut scanner) = Scanner::new(&needle, case_sensitive, max_bytes) else {
+            return Ok(true);
+        };
+        let mut buf = vec![0u8; 64 * 1024];
+        while !scanner.is_done() {
+            if is_cancelled() {
+                fatal = Some(ArchiveError::Cancelled);
+                return Err(sevenz_rust2::Error::Unsupported("karchiver fatal".into()));
+            }
+            match data.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => scanner.feed(&buf[..n]),
+                Err(e) => {
+                    fatal = Some(ArchiveError::Io(e));
+                    return Err(sevenz_rust2::Error::Unsupported("karchiver fatal".into()));
+                }
+            }
+        }
+        if let Some(m) = scanner.finish() {
+            out.push(ContentMatch {
+                name,
+                line: m.line,
+                snippet: m.snippet,
+            });
+        }
+        Ok(true)
+    });
+    if let Some(e) = fatal {
+        return Err(e);
+    }
+    result.map_err(|e| map_open_err_pw(e, have_password))?;
+    Ok(out)
 }
 
 pub fn test(archive: &Path, limits: &Limits) -> Result<TestReport> {

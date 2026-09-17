@@ -17,8 +17,10 @@ use zstd::stream::read::Decoder as ZstdDecoder;
 use zstd::stream::write::Encoder as ZstdEncoder;
 
 use crate::backend::{
-    PreviewEntry, PreviewListing, SourceEntry, TestFailure, TestReport, collect_sources,
+    ContentMatch, PreviewEntry, PreviewListing, SourceEntry, TestFailure, TestReport,
+    collect_sources,
 };
+use crate::content_search::Scanner;
 use crate::error::{ArchiveError, Result, classify_io};
 use crate::format::Format;
 use crate::io_util::{
@@ -352,6 +354,52 @@ pub fn list_detailed(archive: &Path, format: Format) -> Result<PreviewListing> {
         });
     }
     Ok(PreviewListing::new(out))
+}
+
+pub fn search_content(
+    archive: &Path,
+    format: Format,
+    needle: &str,
+    case_sensitive: bool,
+    max_bytes: u64,
+) -> Result<Vec<ContentMatch>> {
+    let reader = open_tar_reader(archive, format)?;
+    let mut tar = Archive::new(reader);
+    let mut out = Vec::new();
+    for entry in tar.entries().map_err(ArchiveError::backend)? {
+        check_cancelled()?;
+        let mut entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        if entry.header().entry_type() == EntryType::Directory {
+            continue;
+        }
+        let name = entry
+            .path()
+            .map(|p| p.to_string_lossy().into_owned())
+            .map_err(ArchiveError::backend)?;
+        let Some(mut scanner) = Scanner::new(needle, case_sensitive, max_bytes) else {
+            return Ok(out);
+        };
+        let mut buf = vec![0u8; 64 * 1024];
+        while !scanner.is_done() {
+            check_cancelled()?;
+            let n = entry.read(&mut buf)?;
+            if n == 0 {
+                break;
+            }
+            scanner.feed(&buf[..n]);
+        }
+        if let Some(m) = scanner.finish() {
+            out.push(ContentMatch {
+                name,
+                line: m.line,
+                snippet: m.snippet,
+            });
+        }
+    }
+    Ok(out)
 }
 
 fn test_link_target(entry: &tar::Entry<'_, impl Read>, name: &str) -> Result<()> {

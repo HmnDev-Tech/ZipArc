@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use jni::JNIEnv;
 use jni::objects::{JClass, JLongArray, JObject, JObjectArray, JString};
-use jni::sys::{jint, jlong};
+use jni::sys::{jboolean, jint, jlong};
 use serde::Serialize;
 
 use crate::backend;
@@ -608,6 +608,46 @@ fn do_test(archive: &Path, password: Option<&str>) -> Result<String> {
     }
 }
 
+#[derive(Serialize)]
+struct SearchMatchDto<'a> {
+    name: &'a str,
+    line: u64,
+    snippet: &'a str,
+}
+
+#[derive(Serialize)]
+struct SearchResultDto<'a> {
+    matches: Vec<SearchMatchDto<'a>>,
+}
+
+fn search_to_json(matches: &[crate::content_search::ContentMatch]) -> Result<String> {
+    let dto = SearchResultDto {
+        matches: matches
+            .iter()
+            .map(|m| SearchMatchDto {
+                name: &m.name,
+                line: m.line,
+                snippet: &m.snippet,
+            })
+            .collect(),
+    };
+    serde_json::to_string(&dto).map_err(ArchiveError::backend)
+}
+
+fn do_search(
+    archive: &Path,
+    needle: &str,
+    case_sensitive: bool,
+    password: Option<&str>,
+    max_bytes: u64,
+) -> Result<String> {
+    std::fs::File::open(archive).map(|_| ())?;
+    let format = format::detect(archive)?;
+    let matches =
+        backend::search_content(archive, format, needle, case_sensitive, password, max_bytes)?;
+    search_to_json(&matches)
+}
+
 /// Shared JNI string-result finisher so fd and path variants throw identical
 /// `RuntimeException` shapes with only the `op` label differing.
 fn finish_json_string<'local>(
@@ -744,6 +784,68 @@ pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_testArchiv
         result
     }));
     finish_json_string(&mut env, "testArchiveWithPasswordFd", outcome)
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_searchArchiveContent<
+    'local,
+>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    archive_str: JString<'local>,
+    needle_str: JString<'local>,
+    case_sensitive: jboolean,
+    max_bytes: jlong,
+    password_str: JString<'local>,
+) -> JString<'local> {
+    let outcome = catch_unwind(AssertUnwindSafe(|| -> Result<String> {
+        clear_cancel();
+        let archive = PathBuf::from(read_string(&mut env, &archive_str)?);
+        let needle = read_string(&mut env, &needle_str)?;
+        let password = read_string(&mut env, &password_str)?;
+        let pw = if password.is_empty() {
+            None
+        } else {
+            Some(password.as_str())
+        };
+        let result = do_search(&archive, &needle, case_sensitive != 0, pw, max_bytes as u64);
+        if !password.is_empty() {
+            wipe_password(password);
+        }
+        result
+    }));
+    finish_json_string(&mut env, "searchArchiveContent", outcome)
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_kerneldroid_karchiver_data_RustBridge_searchArchiveContentFd<
+    'local,
+>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    fd: jint,
+    needle_str: JString<'local>,
+    case_sensitive: jboolean,
+    max_bytes: jlong,
+    password_str: JString<'local>,
+) -> JString<'local> {
+    let outcome = catch_unwind(AssertUnwindSafe(|| -> Result<String> {
+        clear_cancel();
+        let archive = fdPath(fd);
+        let needle = read_string(&mut env, &needle_str)?;
+        let password = read_string(&mut env, &password_str)?;
+        let pw = if password.is_empty() {
+            None
+        } else {
+            Some(password.as_str())
+        };
+        let result = do_search(&archive, &needle, case_sensitive != 0, pw, max_bytes as u64);
+        if !password.is_empty() {
+            wipe_password(password);
+        }
+        result
+    }));
+    finish_json_string(&mut env, "searchArchiveContentFd", outcome)
 }
 
 #[unsafe(no_mangle)]

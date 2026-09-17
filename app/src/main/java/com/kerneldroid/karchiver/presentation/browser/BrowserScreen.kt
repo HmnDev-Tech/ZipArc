@@ -384,6 +384,18 @@ fun BrowserScreen(
             if (state.isLoading) {
                 LinearWavyProgressIndicator(Modifier.fillMaxWidth())
             }
+            if (state.searchDeep && state.query.isNotBlank()) {
+                Text(
+                    text = if (state.searchCapped) {
+                        "Scanned ${state.searchScanned} files · search limit reached"
+                    } else {
+                        "Scanned ${state.searchScanned} files"
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                )
+            }
             Box(Modifier.fillMaxWidth().weight(1f)) {
                 PullToRefreshBox(
                     isRefreshing = refreshing,
@@ -1325,7 +1337,7 @@ internal fun FileRow(
             },
             supportingContent = {
                 Text(
-                    metaText(item),
+                    item.snippet ?: metaText(item),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -1413,9 +1425,12 @@ private fun FileGridCard(
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center
             )
             Text(
-                if (item.isDirectory) "Folder" else item.extension.uppercase(),
+                item.snippet ?: (if (item.isDirectory) "Folder" else item.extension.uppercase()),
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
             )
             if (selected) {
                 Icon(Icons.Filled.CheckCircle, "Selected", tint = MaterialTheme.colorScheme.primary)

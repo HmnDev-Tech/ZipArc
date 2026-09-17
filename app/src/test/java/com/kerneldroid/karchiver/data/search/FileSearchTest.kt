@@ -140,4 +140,49 @@ class FileSearchTest {
         assertTrue(parseSearchQuery("   ").isEmpty)
         assertFalse(parseSearchQuery("zip").isEmpty)
     }
+
+    @Test
+    fun contentKeyAndAliases() {
+        assertEquals(listOf("hello"), parseSearchQuery("content:hello").contentParts)
+        assertEquals(listOf("hello"), parseSearchQuery("text:hello").contentParts)
+        assertEquals(listOf("hello"), parseSearchQuery("c:hello").contentParts)
+        assertTrue(parseSearchQuery("content:hello").nameParts.isEmpty())
+        assertFalse(parseSearchQuery("content:hello").isEmpty)
+    }
+
+    @Test
+    fun archiveKeyAndAlias() {
+        assertEquals(listOf("readme"), parseSearchQuery("archive:readme").archiveParts)
+        assertEquals(listOf("readme"), parseSearchQuery("a:readme").archiveParts)
+        assertFalse(parseSearchQuery("archive:readme").isEmpty)
+    }
+
+    @Test
+    fun quotedContentAndArchiveValues() {
+        val q = parseSearchQuery("content:\"hello world\" archive:\"my notes.txt\"")
+        assertEquals(listOf("hello world"), q.contentParts)
+        assertEquals(listOf("my notes.txt"), q.archiveParts)
+    }
+
+    @Test
+    fun mixedTokensKeepAndSemantics() {
+        val q = parseSearchQuery("report ext:pdf content:\"quarterly\" archive:data")
+        assertEquals(listOf("report"), q.nameParts)
+        assertEquals(setOf("pdf"), q.extensions)
+        assertEquals(listOf("quarterly"), q.contentParts)
+        assertEquals(listOf("data"), q.archiveParts)
+        assertFalse(q.isEmpty)
+    }
+
+    @Test
+    fun emptyContentAndArchiveValuesFallBackToPlainText() {
+        assertEquals(listOf("content:"), parseSearchQuery("content:").nameParts)
+        assertEquals(listOf("archive:"), parseSearchQuery("archive:").nameParts)
+    }
+
+    @Test
+    fun contentPartsStillNameFilterFastPath() {
+        val q = parseSearchQuery("content:hello")
+        assertTrue(q.matches("anything.txt", "txt", false, 1, 0))
+    }
 }

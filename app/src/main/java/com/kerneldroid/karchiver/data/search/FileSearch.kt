@@ -8,6 +8,8 @@ import java.time.format.DateTimeParseException
 
 data class SearchQuery(
     val nameParts: List<String> = emptyList(),
+    val contentParts: List<String> = emptyList(),
+    val archiveParts: List<String> = emptyList(),
     val extensions: Set<String> = emptySet(),
     val modifiedAfter: Long? = null,
     val modifiedBefore: Long? = null,
@@ -17,12 +19,12 @@ data class SearchQuery(
     val filesOnly: Boolean = false
 ) {
     val isEmpty: Boolean get() =
-        nameParts.isEmpty() && extensions.isEmpty() && modifiedAfter == null &&
+        nameParts.isEmpty() && contentParts.isEmpty() && archiveParts.isEmpty() &&
+            extensions.isEmpty() && modifiedAfter == null &&
             modifiedBefore == null && sizeMin == null && sizeMax == null &&
             !dirsOnly && !filesOnly
 
-    fun matches(
-        name: String,
+    fun matchesBase(
         extension: String,
         isDirectory: Boolean,
         size: Long,
@@ -31,14 +33,25 @@ data class SearchQuery(
         if (dirsOnly && !isDirectory) return false
         if (filesOnly && isDirectory) return false
         if (extensions.isNotEmpty() && (isDirectory || extension.lowercase() !in extensions)) return false
-        for (part in nameParts) {
-            if (!name.contains(part, ignoreCase = true)) return false
-        }
         modifiedAfter?.let { if (lastModified < it) return false }
         modifiedBefore?.let { if (lastModified >= it) return false }
         if (!isDirectory) {
             sizeMin?.let { if (size < it) return false }
             sizeMax?.let { if (size > it) return false }
+        }
+        return true
+    }
+
+    fun matches(
+        name: String,
+        extension: String,
+        isDirectory: Boolean,
+        size: Long,
+        lastModified: Long
+    ): Boolean {
+        if (!matchesBase(extension, isDirectory, size, lastModified)) return false
+        for (part in nameParts) {
+            if (!name.contains(part, ignoreCase = true)) return false
         }
         return true
     }
@@ -48,6 +61,8 @@ fun parseSearchQuery(raw: String, now: Long = System.currentTimeMillis()): Searc
     var q = SearchQuery()
     if (raw.isBlank()) return q
     val names = mutableListOf<String>()
+    val contents = mutableListOf<String>()
+    val archives = mutableListOf<String>()
     val exts = mutableSetOf<String>()
     for (token in splitTokens(raw)) {
         if (token.isBlank()) continue
@@ -57,6 +72,8 @@ fun parseSearchQuery(raw: String, now: Long = System.currentTimeMillis()): Searc
             val value = unquote(token.substring(colon + 1))
             when (key) {
                 "name", "n" -> if (value.isNotEmpty()) names.add(value)
+                "content", "text", "c" -> if (value.isNotEmpty()) contents.add(value) else names.add(token)
+                "archive", "a" -> if (value.isNotEmpty()) archives.add(value) else names.add(token)
                 "ext", "format", "f" -> value.split(',', ';', '|', ' ')
                     .map { it.trim().trimStart('.').lowercase() }
                     .filter { it.isNotEmpty() }
@@ -80,7 +97,12 @@ fun parseSearchQuery(raw: String, now: Long = System.currentTimeMillis()): Searc
             names.add(unquote(token))
         }
     }
-    return q.copy(nameParts = names.filter { it.isNotEmpty() }, extensions = exts)
+    return q.copy(
+        nameParts = names.filter { it.isNotEmpty() },
+        contentParts = contents.filter { it.isNotEmpty() },
+        archiveParts = archives.filter { it.isNotEmpty() },
+        extensions = exts
+    )
 }
 
 fun FileItem.matchesSearch(query: SearchQuery): Boolean =

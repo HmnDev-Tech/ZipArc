@@ -19,7 +19,8 @@ data class FileItem(
     val isDirectory: Boolean = file.isDirectory,
     val extension: String = if (file.isDirectory) "" else file.extension.lowercase(),
     val size: Long = if (file.isDirectory) 0 else file.length(),
-    val lastModified: Long = file.lastModified()
+    val lastModified: Long = file.lastModified(),
+    val snippet: String? = null
 ) {
     val format: FormatInfo = if (isDirectory) FormatInfo.DIRECTORY else FormatRegistry.forExtension(extension)
 }
@@ -90,6 +91,12 @@ data class PreviewEntry(
 data class PreviewListing(
     val entries: List<PreviewEntry>,
     val encrypted: Boolean
+)
+
+data class ArchiveContentMatch(
+    val name: String,
+    val line: Int,
+    val snippet: String
 )
 
 data class TestFailure(
@@ -795,6 +802,69 @@ class FileSystemRepository {
         }
     }
 
+    suspend fun searchArchiveContent(
+        archive: File,
+        needle: String,
+        caseSensitive: Boolean,
+        maxBytes: Long
+    ): Result<List<ArchiveContentMatch>> = withContext(Dispatchers.IO) {
+        runCatching {
+            normalSearchArchiveContent(archive, needle, caseSensitive, maxBytes)
+        }.recoverCatching { e ->
+            tryPfdSearchArchiveContent(archive, needle, caseSensitive, maxBytes)?.let { return@recoverCatching it }
+            throw e
+        }
+    }
+
+    private fun normalSearchArchiveContent(
+        archive: File,
+        needle: String,
+        caseSensitive: Boolean,
+        maxBytes: Long
+    ): List<ArchiveContentMatch> {
+        if (!RustBridge.isLoaded()) error("Native engine required")
+        val json = RustBridge.searchArchiveContent(archive.absolutePath, needle, caseSensitive, maxBytes, "")
+        return parseSearchJson(json)
+    }
+
+    private suspend fun tryPfdSearchArchiveContent(
+        archive: File,
+        needle: String,
+        caseSensitive: Boolean,
+        maxBytes: Long
+    ): List<ArchiveContentMatch>? {
+        if (!safAutoFallback) return null
+        val bridge = safBridge ?: return null
+        if (!RustBridge.isLoaded()) return null
+        val archiveReadable = try { archive.canRead() } catch (_: Exception) { false }
+        if (archiveReadable) return null
+        val pfd = bridge.openReadFdFor(archive, safVolumes) ?: return null
+        return try {
+            parseSearchJson(RustBridge.searchArchiveContentFd(pfd.fd, needle, caseSensitive, maxBytes, ""))
+        } catch (_: Exception) {
+            null
+        } finally {
+            closeQuietly(pfd)
+        }
+    }
+
+    private fun parseSearchJson(json: String): List<ArchiveContentMatch> {
+        val root = org.json.JSONObject(json)
+        val array = root.optJSONArray("matches") ?: org.json.JSONArray()
+        val matches = ArrayList<ArchiveContentMatch>(array.length())
+        for (i in 0 until array.length()) {
+            val o = array.getJSONObject(i)
+            matches.add(
+                ArchiveContentMatch(
+                    name = o.optString("name", ""),
+                    line = o.optInt("line", 0),
+                    snippet = o.optString("snippet", "")
+                )
+            )
+        }
+        return matches
+    }
+
     suspend fun testArchive(
         archive: File,
         password: String? = null,
@@ -1158,6 +1228,8 @@ object RustBridge {
     @JvmStatic external fun listArchiveDetailedWithPasswordFd(fd: Int, password: String): String
     @JvmStatic external fun testArchiveFd(fd: Int): String
     @JvmStatic external fun testArchiveWithPasswordFd(fd: Int, password: String): String
+    @JvmStatic external fun searchArchiveContent(archivePath: String, needle: String, caseSensitive: Boolean, maxBytes: Long, password: String): String
+    @JvmStatic external fun searchArchiveContentFd(fd: Int, needle: String, caseSensitive: Boolean, maxBytes: Long, password: String): String
     @JvmStatic external fun deleteArchiveEntries(archivePath: String, names: Array<String>)
     @JvmStatic external fun deleteArchiveEntriesWithPassword(archivePath: String, names: Array<String>, password: String)
     @JvmStatic external fun renameArchiveEntry(archivePath: String, from: String, to: String)

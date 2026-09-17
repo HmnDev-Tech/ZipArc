@@ -29,8 +29,11 @@ import com.kerneldroid.karchiver.data.history.HistoryRepository
 import com.kerneldroid.karchiver.data.isRarArchive
 import com.kerneldroid.karchiver.data.normalizeArchiveName
 import com.kerneldroid.karchiver.data.PreviewListing
+import com.kerneldroid.karchiver.data.search.DeepSearch
+import com.kerneldroid.karchiver.data.search.SearchOptions
 import com.kerneldroid.karchiver.data.search.matchesSearch
 import com.kerneldroid.karchiver.data.search.parseSearchQuery
+import com.kerneldroid.karchiver.data.search.requiresDeepSearch
 import com.kerneldroid.karchiver.data.RustBridge
 import com.kerneldroid.karchiver.data.SettingsRepository
 import com.kerneldroid.karchiver.data.archive.ActiveOp
@@ -45,13 +48,25 @@ import com.kerneldroid.karchiver.data.storage.SafGrants
 import com.kerneldroid.karchiver.data.storage.VolumeMonitor
 import com.kerneldroid.karchiver.data.storage.loadAppVolumes
 import com.kerneldroid.karchiver.presentation.storage.deepestVolumeFor
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 
 enum class ViewMode { LIST, GRID }
+
+private const val SEARCH_DEBOUNCE_MILLIS = 300L
+
+data class SearchSettings(
+    val searchInContent: Boolean = false,
+    val searchInArchives: Boolean = true,
+    val caseSensitive: Boolean = false,
+    val maxScanMb: Int = 5
+)
 
 data class ArchivePreviewUiState(
     val file: File? = null,
@@ -107,7 +122,10 @@ data class BrowserUiState(
     val rarWriteEnabled: Boolean = false,
     val elevationMode: String = "off",
     val isLoading: Boolean = false,
-    val isSelectionMode: Boolean = false
+    val isSelectionMode: Boolean = false,
+    val searchDeep: Boolean = false,
+    val searchScanned: Int = 0,
+    val searchCapped: Boolean = false
 )
 
 class BrowserViewModel(
@@ -296,6 +314,15 @@ class BrowserViewModel(
 
     private var initialized = false
     private var loadToken = 0
+    private var searchJob: Job? = null
+    private var searchDebounce: Job? = null
+    private var searchSettings = SearchSettings()
+
+    fun setSearchSettings(settings: SearchSettings) {
+        if (searchSettings == settings) return
+        searchSettings = settings
+        if (_state.value.query.isNotBlank()) refresh()
+    }
 
     val volumes = MutableStateFlow<List<AppVolume>>(emptyList())
 
@@ -479,24 +506,68 @@ class BrowserViewModel(
     fun refresh() {
         val s = _state.value
         val token = ++loadToken
-        _state.value = s.copy(isLoading = true)
+        searchJob?.cancel()
+        searchJob = null
+        val options = searchOptions(s)
+        val parsed = parseSearchQuery(s.query)
+        val search = if (!options.searchInArchives && parsed.archiveParts.isNotEmpty()) {
+            parsed.copy(nameParts = parsed.nameParts + parsed.archiveParts, archiveParts = emptyList())
+        } else {
+            parsed
+        }
+        val deep = search.requiresDeepSearch(options)
+        _state.value = s.copy(
+            isLoading = true,
+            searchDeep = deep,
+            searchScanned = 0,
+            searchCapped = false
+        )
         _refreshing.value = true
-        viewModelScope.launch {
-            val search = parseSearchQuery(s.query)
-            val items = repo.listDir(s.currentDir, s.sortBy, s.ascending, s.foldersFirst, elevationEngine())
-                .asSequence()
-                .filter { !s.hideHidden || !it.name.startsWith(".") }
-                .filter { search.isEmpty || it.matchesSearch(search) }
-                .toList()
-            if (token != loadToken) return@launch
-            _state.value = _state.value.copy(
-                items = items,
-                isLoading = false,
-                selected = if (s.isSelectionMode) s.selected else emptySet()
-            )
+        val job = viewModelScope.launch {
+            if (deep) {
+                val result = withContext(Dispatchers.IO) {
+                    DeepSearch(repo).run(s.currentDir, search, options, elevationEngine()) { scanned ->
+                        if (token == loadToken) _state.value = _state.value.copy(searchScanned = scanned)
+                    }
+                }
+                if (token != loadToken) return@launch
+                _state.value = _state.value.copy(
+                    items = result.items,
+                    isLoading = false,
+                    searchDeep = true,
+                    searchScanned = result.scanned,
+                    searchCapped = result.capped,
+                    selected = if (s.isSelectionMode) s.selected else emptySet()
+                )
+            } else {
+                val items = repo.listDir(s.currentDir, s.sortBy, s.ascending, s.foldersFirst, elevationEngine())
+                    .asSequence()
+                    .filter { !s.hideHidden || !it.name.startsWith(".") }
+                    .filter { search.isEmpty || it.matchesSearch(search) }
+                    .toList()
+                if (token != loadToken) return@launch
+                _state.value = _state.value.copy(
+                    items = items,
+                    isLoading = false,
+                    searchDeep = false,
+                    searchScanned = 0,
+                    searchCapped = false,
+                    selected = if (s.isSelectionMode) s.selected else emptySet()
+                )
+            }
             _refreshing.value = false
         }
+        searchJob = job
     }
+
+    private fun searchOptions(s: BrowserUiState): SearchOptions = SearchOptions(
+        searchInContent = searchSettings.searchInContent,
+        searchInArchives = searchSettings.searchInArchives,
+        caseSensitive = searchSettings.caseSensitive,
+        maxScanBytes = searchSettings.maxScanMb.toLong() * 1024L * 1024L,
+        hideHidden = s.hideHidden,
+        elevationMode = s.elevationMode
+    )
 
     fun canGoUp(): Boolean {
         val current = _state.value.currentDir
@@ -570,7 +641,16 @@ class BrowserViewModel(
 
     fun setQuery(q: String) {
         _state.value = _state.value.copy(query = q)
-        refresh()
+        searchDebounce?.cancel()
+        searchDebounce = null
+        if (parseSearchQuery(q).requiresDeepSearch(searchOptions(_state.value))) {
+            searchDebounce = viewModelScope.launch {
+                delay(SEARCH_DEBOUNCE_MILLIS)
+                refresh()
+            }
+        } else {
+            refresh()
+        }
     }
 
     fun copySelection() {

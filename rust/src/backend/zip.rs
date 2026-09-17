@@ -6,7 +6,8 @@ use std::io::{self, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use crate::backend::collect_sources;
-use crate::backend::{PreviewEntry, PreviewListing, TestFailure, TestReport};
+use crate::backend::{ContentMatch, PreviewEntry, PreviewListing, TestFailure, TestReport};
+use crate::content_search::Scanner;
 use crate::error::{ArchiveError, Result, classify_io};
 use crate::io_util::{
     AtomicFile, LimitState, LimitedReader, Limits, check_cancelled, create_dir_all_checked,
@@ -603,6 +604,67 @@ fn list_entries<R: Read + Seek>(zip: &mut ZipArchive<R>) -> Result<Vec<String>> 
     for i in 0..zip.len() {
         let entry = zip.by_index_raw(i).map_err(ArchiveError::backend)?;
         out.push(entry.name().to_string());
+    }
+    Ok(out)
+}
+
+pub fn search_content(
+    archive: &Path,
+    needle: &str,
+    case_sensitive: bool,
+    password: Option<&[u8]>,
+    max_bytes: u64,
+) -> Result<Vec<ContentMatch>> {
+    match resolve_split_segments(archive)? {
+        None => {
+            let mut zip = open_single(archive)?;
+            search_entries(&mut zip, needle, case_sensitive, password, max_bytes)
+        }
+        Some(segments) => {
+            let mut zip = open_split(&segments)?;
+            search_entries(&mut zip, needle, case_sensitive, password, max_bytes)
+        }
+    }
+}
+
+fn search_entries<R: Read + Seek>(
+    zip: &mut ZipArchive<R>,
+    needle: &str,
+    case_sensitive: bool,
+    password: Option<&[u8]>,
+    max_bytes: u64,
+) -> Result<Vec<ContentMatch>> {
+    let mut out = Vec::new();
+    for i in 0..zip.len() {
+        check_cancelled()?;
+        let mut entry = match open_entry(zip, i, password) {
+            Ok(e) => e,
+            Err(e) if e.is_fatal() => return Err(e),
+            Err(_) => continue,
+        };
+        if entry.is_dir() {
+            continue;
+        }
+        let name = entry.name().to_string();
+        let Some(mut scanner) = Scanner::new(needle, case_sensitive, max_bytes) else {
+            return Ok(out);
+        };
+        let mut buf = vec![0u8; 64 * 1024];
+        while !scanner.is_done() {
+            check_cancelled()?;
+            let n = entry.read(&mut buf)?;
+            if n == 0 {
+                break;
+            }
+            scanner.feed(&buf[..n]);
+        }
+        if let Some(m) = scanner.finish() {
+            out.push(ContentMatch {
+                name,
+                line: m.line,
+                snippet: m.snippet,
+            });
+        }
     }
     Ok(out)
 }
